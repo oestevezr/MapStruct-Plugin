@@ -18,8 +18,43 @@
       {
         "command": "mapstruct-generator.start",
         "title": "MapStruct: Generar Mapper desde DTO/DAO"
+      },
+      {
+        "command": "mapstruct-generator.mapFromProject",
+        "title": "Mapear desde proyecto",
+        "icon": "$(file-directory)"
+      },
+      {
+        "command": "mapstruct-generator.mapFromPreview",
+        "title": "Mapear con Preview URL",
+        "icon": "$(globe)",
+        "enablement": "false"
+      },
+      {
+        "command": "mapstruct-generator.mapFromImages",
+        "title": "Mapear con imágenes",
+        "icon": "$(file-media)",
+        "enablement": "false"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mapstruct-container",
+          "title": "MapStruct Generator",
+          "icon": "$(arrow-swap)"
+        }
+      ]
+    },
+    "views": {
+      "mapstruct-container": [
+        {
+          "id": "mapstruct-sidebar",
+          "name": "Opciones de Mapeo",
+          "when": "workspaceFolderCount > 0"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
