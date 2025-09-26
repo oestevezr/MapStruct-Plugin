@@ -50,7 +50,7 @@ async function findBusinessFolder(): Promise<string | null> {
         console.log(`  - src/main/java: ${mainPath}`);
         console.log(`  - src: ${srcPath}`);
 
-        let searchPath = mainPath;
+    let searchPath: string;
 
         // Si no existe src/main/java, buscar directamente desde la raíz
         try {
@@ -340,7 +340,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             // 6. Crear y mostrar el Webview mejorado
-            createEnhancedMappingWebview(context.extensionUri, dtoFields, daoFields);
+            createEnhancedMappingWebview(context, context.extensionUri, dtoFields, daoFields);
 
         } catch (error) {
             vscode.window.showErrorMessage(`Error durante el procesamiento automático: ${error}`);
@@ -350,46 +350,61 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(disposable);
 }
 
-function createEnhancedMappingWebview(extensionUri: vscode.Uri, dtoFields: GroupedFields, daoFields: JavaField[]) {
-    const panel = vscode.window.createWebviewPanel(
-        'enhancedMapstructMapper',
-        'Mapeo Avanzado de Campos MapStruct',
-        vscode.ViewColumn.One,
-        {
-            enableScripts: true,
-            localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'node_modules'), vscode.Uri.joinPath(extensionUri, 'media')]
-        }
-    );
+function createEnhancedMappingWebview(context: vscode.ExtensionContext, extensionUri: vscode.Uri, dtoFields: GroupedFields, daoFields: JavaField[]) {
+  const panel = vscode.window.createWebviewPanel(
+    'enhancedMapstructMapper',
+    'Mapeo Avanzado de Campos MapStruct',
+    vscode.ViewColumn.One,
+    {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'node_modules'), vscode.Uri.joinPath(extensionUri, 'media')]
+    }
+  );
 
-    panel.webview.html = getEnhancedWebviewContent(panel.webview, extensionUri, dtoFields, daoFields);
+  panel.webview.html = getEnhancedWebviewContent(panel.webview, extensionUri, dtoFields, daoFields);
 
-    // Manejar mensajes desde el webview
     panel.webview.onDidReceiveMessage(
-        message => {
+        async message => {
             switch (message.command) {
-                case 'generate':
+                        case 'generate': {
                     vscode.window.showInformationMessage('Mapeos configurados. Generando código MapStruct...');
+                            if (message.mappingConfig) {
+                        try {
+                            const mappingConfig: StoredMappingConfig = message.mappingConfig;
+                                    await context.workspaceState.update('mapstructGenerator.lastMapping', mappingConfig);
+                                    console.log('Mapping config persisted (workspaceState) on generate');
+                        } catch (e) {
+                            console.warn('No se pudo persistir mappingConfig en generate:', e);
+                        }
+                    }
                     console.log('Mapeos configurados por el usuario:', message.mappings);
-
-                    // TODO: Aquí irá la lógica mejorada para construir el prompt y llamar a la API
-                    // const prompt = createAdvancedGeminiPrompt(message.mappings, dtoFields, daoFields);
-                    // const generatedCode = await callGeminiAPI(prompt);
-                    // showGeneratedCodeInEditor(generatedCode);
-
                     panel.dispose();
                     return;
-
-                case 'autoMap':
-                    // Auto-mapear campos con nombres idénticos
+                }
+                case 'autoMap': {
                     const autoMappings = generateAutoMappings(dtoFields, daoFields);
                     panel.webview.postMessage({ command: 'applyAutoMappings', mappings: autoMappings });
                     return;
+                }
+                case 'exportJson': {
+                    try {
+                        const mappingConfig: StoredMappingConfig = message.data;
+                                await context.workspaceState.update('mapstructGenerator.lastMapping', mappingConfig);
+                                vscode.window.showInformationMessage('Configuración de mapeo almacenada temporalmente (workspaceState).');
+                    } catch (err) {
+                        vscode.window.showErrorMessage('Error guardando configuración de mapeo: ' + err);
+                    }
+                    return;
+                }
             }
         },
         undefined,
         []
     );
 }
+
+// Nota: Se eliminó createEnhancedMappingWebviewWithUndoClear porque la lógica de undo/redo y limpiar
+// está completamente encapsulada en el propio WebView (JS). No se requieren mensajes adicionales.
 
 /**
  * Genera mapeos automáticos para campos con nombres idénticos.
@@ -1347,13 +1362,14 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
 
                 clearBtn.addEventListener('click', () => {
                     if (confirm('¿Estás seguro de que deseas limpiar todas las conexiones?')) {
-                        saveToHistory();
                         mappings.clear();
                         reverseMappings.clear();
                         updateConnections();
                         drawConnections();
                         clearSelection();
                         updateStats();
+                        // Guardar el estado vacío para permitir "deshacer" la limpieza
+                        saveToHistory();
                     }
                 });
 
@@ -1587,4 +1603,44 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri, dt
 
 
 // This function is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate(): void {
+    console.log('Extension deactivated');
+}
+
+// Utilidad para recuperar el último mapeo (para uso futuro al llamar un API)
+export function getLastStoredMapping(context: vscode.ExtensionContext): StoredMappingConfig | undefined {
+    return context.workspaceState.get<StoredMappingConfig>('mapstructGenerator.lastMapping');
+}
+
+/**
+ * Interfaz para representar la configuración de mapeo almacenada.
+ */
+interface StoredMappingConfig {
+  metadata: {
+    generatedAt: string;
+    totalDtoFields: number;
+    totalDaoFields: number;
+    mappedDtoFields: number;
+    mappedDaoFields: number;
+    totalConnections: number;
+  };
+  dtoFields: Array<{
+    className: string;
+    fieldName: string;
+    fieldType: string;
+    mapped: boolean;
+    mappedTo: Array<{ daoField: string; mappingType: string }>;
+  }>;
+  daoFields: Array<{
+    fieldName: string;
+    fieldType: string;
+    sourceClass: string;
+    mapped: boolean;
+    mappedFrom: Array<{ dtoClass: string; dtoField: string; mappingType: string }>;
+  }>;
+  mappingSummary: {
+    oneToOne: Array<{ dtoClass: string; dtoField: string; daoField: string }>;
+    oneToMany: Array<{ dtoClass: string; dtoField: string; daoField: string }>;
+    manyToOne: Array<{ dtoClass: string; dtoField: string; daoField: string }>;
+  };
+}
