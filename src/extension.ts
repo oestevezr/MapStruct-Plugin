@@ -735,7 +735,10 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
             <h1>🔄 Mapeo Avanzado de Campos</h1>
             <div class="controls">
                 <vscode-button appearance="secondary" id="auto-map-btn">🎯 Auto-mapear</vscode-button>
-                <vscode-button appearance="secondary" id="clear-btn">🗑️ Limpiar</vscode-button>
+                <vscode-button appearance="secondary" id="undo-btn" disabled>↶ Deshacer</vscode-button>
+                <vscode-button appearance="secondary" id="redo-btn" disabled>↷ Rehacer</vscode-button>
+                <vscode-button appearance="secondary" id="export-json-btn">💾 Exportar JSON</vscode-button>
+                <vscode-button appearance="secondary" id="clear-btn">🗑️ Limpiar Todo</vscode-button>
             </div>
         </div>
 
@@ -789,14 +792,225 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
                 let selectedField = null;
                 let connectionCounter = 0;
 
+                // Historial para undo/redo
+                let mappingHistory = [];
+                let historyIndex = -1;
+                const MAX_HISTORY = 50;
+
                 // Elementos principales
                 const dtoSearch = document.getElementById('dto-search');
                 const daoSearch = document.getElementById('dao-search');
                 const autoMapBtn = document.getElementById('auto-map-btn');
+                const undoBtn = document.getElementById('undo-btn');
+                const redoBtn = document.getElementById('redo-btn');
+                const exportJsonBtn = document.getElementById('export-json-btn');
                 const clearBtn = document.getElementById('clear-btn');
                 const generateBtn = document.getElementById('generate-btn');
                 const mappingStats = document.getElementById('mapping-stats');
                 const connectionSvg = document.getElementById('connection-svg');
+
+                // Funciones de historial
+                function saveToHistory() {
+                    // Crear snapshot del estado actual
+                    const state = {
+                        mappings: new Map(mappings),
+                        reverseMappings: new Map(reverseMappings),
+                        timestamp: Date.now()
+                    };
+
+                    // Limpiar historial futuro si estamos en el medio
+                    if (historyIndex < mappingHistory.length - 1) {
+                        mappingHistory = mappingHistory.slice(0, historyIndex + 1);
+                    }
+
+                    // Agregar nuevo estado
+                    mappingHistory.push(state);
+
+                    // Mantener límite de historial
+                    if (mappingHistory.length > MAX_HISTORY) {
+                        mappingHistory.shift();
+                        historyIndex--;
+                    }
+
+                    historyIndex = mappingHistory.length - 1;
+                    updateHistoryButtons();
+                }
+
+                function undo() {
+                    if (historyIndex > 0) {
+                        historyIndex--;
+                        const state = mappingHistory[historyIndex];
+                        mappings = new Map(state.mappings);
+                        reverseMappings = new Map(state.reverseMappings);
+                        updateConnections();
+                        drawConnections();
+                        updateStats();
+                        updateHistoryButtons();
+                    }
+                }
+
+                function redo() {
+                    if (historyIndex < mappingHistory.length - 1) {
+                        historyIndex++;
+                        const state = mappingHistory[historyIndex];
+                        mappings = new Map(state.mappings);
+                        reverseMappings = new Map(state.reverseMappings);
+                        updateConnections();
+                        drawConnections();
+                        updateStats();
+                        updateHistoryButtons();
+                    }
+                }
+
+                function updateHistoryButtons() {
+                    undoBtn.disabled = historyIndex <= 0;
+                    redoBtn.disabled = historyIndex >= mappingHistory.length - 1;
+                }
+
+                function removeSpecificMapping(dtoClass, dtoField, daoField) {
+                    const dtoKey = \`dto:\${dtoClass}.\${dtoField}\`;
+                    const daoKey = \`dao:\${daoField}\`;
+
+                    // Guardar estado antes del cambio
+                    saveToHistory();
+
+                    // Remover de mappings
+                    if (mappings.has(dtoKey)) {
+                        const mappingArray = mappings.get(dtoKey);
+                        const filteredArray = mappingArray.filter(m => m.daoField !== daoField);
+                        if (filteredArray.length > 0) {
+                            mappings.set(dtoKey, filteredArray);
+                        } else {
+                            mappings.delete(dtoKey);
+                        }
+                    }
+
+                    // Remover de reverseMappings
+                    if (reverseMappings.has(daoKey)) {
+                        const dtoKeys = reverseMappings.get(daoKey);
+                        const filteredKeys = dtoKeys.filter(key => key !== dtoKey);
+                        if (filteredKeys.length > 0) {
+                            reverseMappings.set(daoKey, filteredKeys);
+                        } else {
+                            reverseMappings.delete(daoKey);
+                        }
+                    }
+
+                    updateConnections();
+                    drawConnections();
+                    updateStats();
+                }
+
+                function exportMappingConfiguration() {
+                    // Obtener todos los campos DTO disponibles
+                    const allDtoFields = [];
+                    document.querySelectorAll('.dto-field').forEach(field => {
+                        allDtoFields.push({
+                            className: field.dataset.dtoClass,
+                            fieldName: field.dataset.dtoField,
+                            fieldType: field.querySelector('.field-type').textContent.replace(/[()]/g, ''),
+                            mapped: false,
+                            mappedTo: []
+                        });
+                    });
+
+                    // Obtener todos los campos DAO disponibles
+                    const allDaoFields = [];
+                    document.querySelectorAll('.dao-field').forEach(field => {
+                        allDaoFields.push({
+                            fieldName: field.dataset.daoField,
+                            fieldType: field.querySelector('.field-type').textContent.replace(/[()]/g, ''),
+                            sourceClass: field.querySelector('.field-source').textContent.replace('de ', ''),
+                            mapped: false,
+                            mappedFrom: []
+                        });
+                    });
+
+                    // Aplicar mapeos a los campos DTO
+                    mappings.forEach((mappingArray, dtoKey) => {
+                        const [, classAndField] = dtoKey.split(':');
+                        const [className, fieldName] = classAndField.split('.');
+
+                        const dtoField = allDtoFields.find(f =>
+                            f.className === className && f.fieldName === fieldName
+                        );
+
+                        if (dtoField) {
+                            dtoField.mapped = true;
+                            dtoField.mappedTo = mappingArray.map(m => ({
+                                daoField: m.daoField,
+                                mappingType: mappingArray.length > 1 ? 'one-to-many' : 'one-to-one'
+                            }));
+                        }
+                    });
+
+                    // Aplicar mapeos a los campos DAO
+                    reverseMappings.forEach((dtoKeys, daoKey) => {
+                        const daoFieldName = daoKey.replace('dao:', '');
+                        const daoField = allDaoFields.find(f => f.fieldName === daoFieldName);
+
+                        if (daoField) {
+                            daoField.mapped = true;
+                            daoField.mappedFrom = dtoKeys.map(dtoKey => {
+                                const [, classAndField] = dtoKey.split(':');
+                                const [className, fieldName] = classAndField.split('.');
+                                return {
+                                    dtoClass: className,
+                                    dtoField: fieldName,
+                                    mappingType: dtoKeys.length > 1 ? 'many-to-one' : 'one-to-one'
+                                };
+                            });
+                        }
+                    });
+
+                    // Crear el JSON final
+                    const mappingConfig = {
+                        metadata: {
+                            generatedAt: new Date().toISOString(),
+                            totalDtoFields: allDtoFields.length,
+                            totalDaoFields: allDaoFields.length,
+                            mappedDtoFields: allDtoFields.filter(f => f.mapped).length,
+                            mappedDaoFields: allDaoFields.filter(f => f.mapped).length,
+                            totalConnections: Array.from(mappings.values()).reduce((sum, arr) => sum + arr.length, 0)
+                        },
+                        dtoFields: allDtoFields,
+                        daoFields: allDaoFields,
+                        mappingSummary: {
+                            oneToOne: [],
+                            oneToMany: [],
+                            manyToOne: []
+                        }
+                    };
+
+                    // Clasificar mapeos por tipo
+                    mappings.forEach((mappingArray, dtoKey) => {
+                        const [, classAndField] = dtoKey.split(':');
+                        const [className, fieldName] = classAndField.split('.');
+
+                        mappingArray.forEach(mapping => {
+                            const mappingInfo = {
+                                dtoClass: className,
+                                dtoField: fieldName,
+                                daoField: mapping.daoField
+                            };
+
+                            if (mappingArray.length === 1) {
+                                const daoKey = \`dao:\${mapping.daoField}\`;
+                                const reverseMappingCount = reverseMappings.get(daoKey)?.length || 0;
+
+                                if (reverseMappingCount === 1) {
+                                    mappingConfig.mappingSummary.oneToOne.push(mappingInfo);
+                                } else {
+                                    mappingConfig.mappingSummary.manyToOne.push(mappingInfo);
+                                }
+                            } else {
+                                mappingConfig.mappingSummary.oneToMany.push(mappingInfo);
+                            }
+                        });
+                    });
+
+                    return mappingConfig;
+                }
 
                 // Funcionalidad de búsqueda
                 dtoSearch.addEventListener('input', (e) => {
@@ -901,6 +1115,9 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
                         return;
                     }
 
+                    // Guardar estado antes del cambio
+                    saveToHistory();
+
                     const dtoKey = dtoField.key;
                     const daoKey = daoField.key;
                     const daoFieldName = daoField.element.dataset.daoField;
@@ -909,18 +1126,25 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
                         field: dtoField.element.dataset.dtoField
                     };
 
+                    // Verificar si la conexión ya existe
+                    if (mappings.has(dtoKey)) {
+                        const existingMappings = mappings.get(dtoKey);
+                        if (existingMappings.some(m => m.daoField === daoFieldName)) {
+                            alert('Esta conexión ya existe');
+                            return;
+                        }
+                    }
+
                     // Agregar mapeo DTO -> DAO (puede ser 1:N)
                     if (!mappings.has(dtoKey)) {
                         mappings.set(dtoKey, []);
                     }
                     const dtoMappings = mappings.get(dtoKey);
-                    if (!dtoMappings.some(m => m.daoField === daoFieldName)) {
-                        dtoMappings.push({
-                            dtoClass: dtoInfo.class,
-                            dtoField: dtoInfo.field,
-                            daoField: daoFieldName
-                        });
-                    }
+                    dtoMappings.push({
+                        dtoClass: dtoInfo.class,
+                        dtoField: dtoInfo.field,
+                        daoField: daoFieldName
+                    });
 
                     // Agregar mapeo reverso DAO -> DTO (puede ser N:1)
                     if (!reverseMappings.has(daoKey)) {
@@ -1067,42 +1291,14 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
 
                     // Doble click para eliminar conexión
                     path.addEventListener('dblclick', () => {
-                        removeConnection(mapping.dtoClass, mapping.dtoField, mapping.daoField);
+                        if (confirm('¿Eliminar esta conexión?')) {
+                            removeSpecificMapping(mapping.dtoClass, mapping.dtoField, mapping.daoField);
+                        }
                     });
 
                     connectionSvg.appendChild(path);
                 }
 
-                function removeConnection(dtoClass, dtoField, daoFieldName) {
-                    const dtoKey = \`dto:\${dtoClass}.\${dtoField}\`;
-                    const daoKey = \`dao:\${daoFieldName}\`;
-
-                    // Remover de mappings
-                    if (mappings.has(dtoKey)) {
-                        const mappingArray = mappings.get(dtoKey);
-                        const filteredArray = mappingArray.filter(m => m.daoField !== daoFieldName);
-                        if (filteredArray.length > 0) {
-                            mappings.set(dtoKey, filteredArray);
-                        } else {
-                            mappings.delete(dtoKey);
-                        }
-                    }
-
-                    // Remover de reverseMappings
-                    if (reverseMappings.has(daoKey)) {
-                        const dtoKeys = reverseMappings.get(daoKey);
-                        const filteredKeys = dtoKeys.filter(key => key !== dtoKey);
-                        if (filteredKeys.length > 0) {
-                            reverseMappings.set(daoKey, filteredKeys);
-                        } else {
-                            reverseMappings.delete(daoKey);
-                        }
-                    }
-
-                    updateConnections();
-                    drawConnections();
-                    updateStats();
-                }
 
                 function updateStats() {
                     const totalDtoFields = document.querySelectorAll('.dto-field').length;
@@ -1131,8 +1327,27 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
                     vscode.postMessage({ command: 'autoMap' });
                 });
 
+                undoBtn.addEventListener('click', () => {
+                    undo();
+                });
+
+                redoBtn.addEventListener('click', () => {
+                    redo();
+                });
+
+                exportJsonBtn.addEventListener('click', () => {
+                    const mappingConfig = exportMappingConfiguration();
+
+                    // Enviar JSON al backend para guardarlo
+                    vscode.postMessage({
+                        command: 'exportJson',
+                        data: mappingConfig
+                    });
+                });
+
                 clearBtn.addEventListener('click', () => {
                     if (confirm('¿Estás seguro de que deseas limpiar todas las conexiones?')) {
+                        saveToHistory();
                         mappings.clear();
                         reverseMappings.clear();
                         updateConnections();
@@ -1229,8 +1444,38 @@ function getEnhancedWebviewContent(webview: vscode.Webview, extensionUri: vscode
                     attributeFilter: ['style', 'class']
                 });
 
+                // Atajos de teclado
+                document.addEventListener('keydown', (e) => {
+                    // Ctrl+Z para deshacer
+                    if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+                        e.preventDefault();
+                        undo();
+                    }
+                    // Ctrl+Shift+Z o Ctrl+Y para rehacer
+                    else if ((e.ctrlKey && e.shiftKey && e.key === 'Z') || (e.ctrlKey && e.key === 'y')) {
+                        e.preventDefault();
+                        redo();
+                    }
+                    // Escape para limpiar selección
+                    else if (e.key === 'Escape') {
+                        clearSelection();
+                        updateStats();
+                    }
+                    // Ctrl+S para exportar JSON
+                    else if (e.ctrlKey && e.key === 's') {
+                        e.preventDefault();
+                        exportJsonBtn.click();
+                    }
+                });
+
                 // Inicializar
                 updateStats();
+                updateHistoryButtons();
+
+                // Guardar estado inicial
+                setTimeout(() => {
+                    saveToHistory();
+                }, 100);
             })();
         </script>
     </body>
