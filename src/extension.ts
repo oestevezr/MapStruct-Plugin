@@ -760,8 +760,8 @@ function getWebviewContent(
         }
 
         .field-item.mapped {
-            background: var(--vscode-charts-green);
-            color: var(--vscode-charts-foreground);
+            border-left: 4px solid transparent;
+            position: relative;
         }
 
         .field-name {
@@ -795,8 +795,8 @@ function getWebviewContent(
         }
 
         .dao-field-item.mapped {
-            background: var(--vscode-charts-green);
-            color: var(--vscode-charts-foreground);
+            border-left: 4px solid transparent;
+            position: relative;
         }
 
         .mapping-indicator {
@@ -804,16 +804,82 @@ function getWebviewContent(
             right: 8px;
             top: 50%;
             transform: translateY(-50%);
-            width: 8px;
-            height: 8px;
+            width: 12px;
+            height: 12px;
             border-radius: 50%;
-            background: var(--vscode-charts-green);
             display: none;
+            border: 2px solid var(--vscode-editor-background);
         }
 
         .field-item.mapped .mapping-indicator,
         .dao-field-item.mapped .mapping-indicator {
             display: block;
+        }
+
+        /* Colores para múltiples mapeos */
+        .multi-color-indicator {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 12px;
+            display: none;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .field-item.mapped.multi-mapped .multi-color-indicator,
+        .dao-field-item.mapped.multi-mapped .multi-color-indicator {
+            display: block;
+        }
+
+        .field-item.mapped.multi-mapped .mapping-indicator,
+        .dao-field-item.mapped.multi-mapped .mapping-indicator {
+            display: none;
+        }
+
+        .color-stripe {
+            height: 100%;
+            float: left;
+        }
+
+        /* Paleta de colores para mapeos */
+        .mapping-color-0 { background: #007ACC; } /* Azul VS Code */
+        .mapping-color-1 { background: #28A745; } /* Verde */
+        .mapping-color-2 { background: #DC3545; } /* Rojo */
+        .mapping-color-3 { background: #FFC107; } /* Amarillo */
+        .mapping-color-4 { background: #6F42C1; } /* Púrpura */
+        .mapping-color-5 { background: #FD7E14; } /* Naranja */
+        .mapping-color-6 { background: #20C997; } /* Turquesa */
+        .mapping-color-7 { background: #E83E8C; } /* Rosa */
+        .mapping-color-8 { background: #6C757D; } /* Gris */
+        .mapping-color-9 { background: #17A2B8; } /* Cian */
+
+        /* Aplicar colores a bordes */
+        .mapped-color-0 { border-left-color: #007ACC !important; }
+        .mapped-color-1 { border-left-color: #28A745 !important; }
+        .mapped-color-2 { border-left-color: #DC3545 !important; }
+        .mapped-color-3 { border-left-color: #FFC107 !important; }
+        .mapped-color-4 { border-left-color: #6F42C1 !important; }
+        .mapped-color-5 { border-left-color: #FD7E14 !important; }
+        .mapped-color-6 { border-left-color: #20C997 !important; }
+        .mapped-color-7 { border-left-color: #E83E8C !important; }
+        .mapped-color-8 { border-left-color: #6C757D !important; }
+        .mapped-color-9 { border-left-color: #17A2B8 !important; }
+
+        /* Tooltip para mostrar información del mapeo */
+        .mapping-tooltip {
+            position: absolute;
+            background: var(--vscode-editor-hoverHighlightBackground);
+            border: 1px solid var(--vscode-contrastBorder);
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 11px;
+            z-index: 1000;
+            display: none;
+            max-width: 200px;
+            color: var(--vscode-editor-foreground);
         }
 
         .mapping-count {
@@ -931,6 +997,8 @@ function getWebviewContent(
                         <div class="field-name">\${field.name}</div>
                         <div class="field-type">\${field.type}</div>
                         <div class="mapping-indicator"></div>
+                        <div class="multi-color-indicator"></div>
+                        <div class="mapping-tooltip"></div>
                     \`;
                     fieldsDiv.appendChild(fieldDiv);
                 });
@@ -954,6 +1022,8 @@ function getWebviewContent(
                     <div class="field-name">\${field.name}</div>
                     <div class="field-type">\${field.type} <span style="font-size: 11px;">(\${field.className})</span></div>
                     <div class="mapping-indicator"></div>
+                    <div class="multi-color-indicator"></div>
+                    <div class="mapping-tooltip"></div>
                 \`;
                 container.appendChild(fieldDiv);
             });
@@ -976,6 +1046,10 @@ function getWebviewContent(
                 selectedDtoFields.push(field);
             }
             updateStatus();
+            // Intentar crear mapeo si ya hay campos DAO seleccionados
+            if (selectedDaoFields.length > 0) {
+                createMapping();
+            }
         }
 
         function selectDaoField(element, field) {
@@ -986,7 +1060,11 @@ function getWebviewContent(
                 element.classList.add('selected');
                 selectedDaoFields.push(field);
             }
-            createMapping();
+            updateStatus();
+            // Intentar crear mapeo si ya hay campos DTO seleccionados
+            if (selectedDtoFields.length > 0) {
+                createMapping();
+            }
         }
 
         function createMapping() {
@@ -994,22 +1072,24 @@ function getWebviewContent(
                 // Guardar en historial para deshacer
                 mappingHistory.push([...mappings]);
 
-                // Crear nuevo mapeo
+                // Crear nuevo mapeo con color único
+                const colorIndex = mappings.length % 10; // Ciclar entre 10 colores
                 const newMapping = {
                     id: Date.now(),
                     dtoFields: [...selectedDtoFields],
                     daoFields: [...selectedDaoFields],
                     type: selectedDtoFields.length === 1 && selectedDaoFields.length === 1 ? '1:1' :
-                          selectedDtoFields.length === 1 ? '1:N' : 'N:1'
+                          selectedDtoFields.length === 1 ? '1:N' : 'N:1',
+                    color: colorIndex
                 };
 
                 mappings.push(newMapping);
 
-                // Marcar campos como mapeados
+                // Marcar campos como mapeados con colores
                 selectedDtoFields.forEach(field => {
                     const element = document.querySelector(\`[data-field-id="\${field.className}.\${field.name}"]\`);
                     if (element) {
-                        element.classList.add('mapped');
+                        applyMappingStyle(element, field, 'dto');
                         element.classList.remove('selected');
                     }
                 });
@@ -1017,7 +1097,7 @@ function getWebviewContent(
                 selectedDaoFields.forEach(field => {
                     const element = document.querySelector(\`[data-field-id="\${field.className}.\${field.name}"]\`);
                     if (element) {
-                        element.classList.add('mapped');
+                        applyMappingStyle(element, field, 'dao');
                         element.classList.remove('selected');
                     }
                 });
@@ -1044,11 +1124,13 @@ function getWebviewContent(
                     );
 
                     if (matchingDao && !mappings.some(m => m.dtoFields.some(df => df.name === dtoField.name))) {
+                        const colorIndex = mappings.length % 10;
                         mappings.push({
                             id: Date.now() + matched,
                             dtoFields: [dtoField],
                             daoFields: [matchingDao],
-                            type: '1:1'
+                            type: '1:1',
+                            color: colorIndex
                         });
                         matched++;
                     }
@@ -1066,16 +1148,118 @@ function getWebviewContent(
         }
 
         function markMappedFields() {
+            // Limpiar estilos previos
+            document.querySelectorAll('.mapped').forEach(el => {
+                el.classList.remove('mapped', 'multi-mapped');
+                for (let i = 0; i < 10; i++) {
+                    el.classList.remove(\`mapped-color-\${i}\`);
+                }
+            });
+
+            // Aplicar nuevos estilos
             mappings.forEach(mapping => {
                 mapping.dtoFields.forEach(field => {
                     const element = document.querySelector(\`[data-field-id="\${field.className}.\${field.name}"]\`);
-                    if (element) element.classList.add('mapped');
+                    if (element) {
+                        applyMappingStyle(element, field, 'dto');
+                    }
                 });
 
                 mapping.daoFields.forEach(field => {
                     const element = document.querySelector(\`[data-field-id="\${field.className}.\${field.name}"]\`);
-                    if (element) element.classList.add('mapped');
+                    if (element) {
+                        applyMappingStyle(element, field, 'dao');
+                    }
                 });
+            });
+        }
+
+        function applyMappingStyle(element, field, fieldType) {
+            // Encontrar todos los mapeos que incluyen este campo
+            const fieldMappings = mappings.filter(mapping => {
+                if (fieldType === 'dto') {
+                    return mapping.dtoFields.some(f => f.name === field.name && f.className === field.className);
+                } else {
+                    return mapping.daoFields.some(f => f.name === field.name && f.className === field.className);
+                }
+            });
+
+            if (fieldMappings.length === 0) return;
+
+            element.classList.add('mapped');
+
+            if (fieldMappings.length === 1) {
+                // Mapeo simple - usar color único
+                const mapping = fieldMappings[0];
+                element.classList.add(\`mapped-color-\${mapping.color}\`);
+
+                const indicator = element.querySelector('.mapping-indicator');
+                if (indicator) {
+                    indicator.className = \`mapping-indicator mapping-color-\${mapping.color}\`;
+                }
+
+                // Agregar tooltip
+                setupTooltip(element, fieldMappings, fieldType);
+            } else {
+                // Mapeos múltiples - usar indicador multicolor
+                element.classList.add('multi-mapped');
+
+                const multiIndicator = element.querySelector('.multi-color-indicator');
+                if (multiIndicator) {
+                    multiIndicator.innerHTML = '';
+                    const stripeWidth = 100 / fieldMappings.length;
+
+                    fieldMappings.forEach(mapping => {
+                        const stripe = document.createElement('div');
+                        stripe.className = \`color-stripe mapping-color-\${mapping.color}\`;
+                        stripe.style.width = \`\${stripeWidth}%\`;
+                        multiIndicator.appendChild(stripe);
+                    });
+                }
+
+                // Usar el color del primer mapeo para el borde
+                element.classList.add(\`mapped-color-\${fieldMappings[0].color}\`);
+
+                // Agregar tooltip
+                setupTooltip(element, fieldMappings, fieldType);
+            }
+        }
+
+        function setupTooltip(element, fieldMappings, fieldType) {
+            const tooltip = element.querySelector('.mapping-tooltip');
+            if (!tooltip) return;
+
+            // Crear contenido del tooltip
+            let tooltipContent = \`<strong>\${fieldMappings.length} mapeo(s)</strong><br>\`;
+
+            fieldMappings.forEach((mapping, index) => {
+                const typeLabel = mapping.type === '1:1' ? 'Uno a Uno' :
+                               mapping.type === '1:N' ? 'Uno a Muchos' : 'Muchos a Uno';
+
+                tooltipContent += \`<div style="margin: 2px 0; padding: 2px; background: var(--vscode-editor-background); border-radius: 2px;">\`;
+                tooltipContent += \`<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--color-\${mapping.color}); margin-right: 4px;" class="mapping-color-\${mapping.color}"></span>\`;
+                tooltipContent += \`<span style="font-size: 10px;">\${typeLabel}</span>\`;
+                tooltipContent += \`</div>\`;
+            });
+
+            tooltip.innerHTML = tooltipContent;
+
+            // Agregar eventos de hover
+            element.addEventListener('mouseenter', (e) => {
+                tooltip.style.display = 'block';
+                tooltip.style.left = \`\${e.pageX + 10}px\`;
+                tooltip.style.top = \`\${e.pageY - 10}px\`;
+            });
+
+            element.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+
+            element.addEventListener('mousemove', (e) => {
+                if (tooltip.style.display === 'block') {
+                    tooltip.style.left = \`\${e.pageX + 10}px\`;
+                    tooltip.style.top = \`\${e.pageY - 10}px\`;
+                }
             });
         }
 
@@ -1087,7 +1271,27 @@ function getWebviewContent(
 
             // Limpiar estilos
             document.querySelectorAll('.mapped, .selected').forEach(el => {
-                el.classList.remove('mapped', 'selected');
+                el.classList.remove('mapped', 'selected', 'multi-mapped');
+                for (let i = 0; i < 10; i++) {
+                    el.classList.remove(\`mapped-color-\${i}\`);
+                }
+
+                // Limpiar indicadores
+                const indicator = el.querySelector('.mapping-indicator');
+                if (indicator) {
+                    indicator.className = 'mapping-indicator';
+                }
+
+                const multiIndicator = el.querySelector('.multi-color-indicator');
+                if (multiIndicator) {
+                    multiIndicator.innerHTML = '';
+                }
+
+                const tooltip = el.querySelector('.mapping-tooltip');
+                if (tooltip) {
+                    tooltip.innerHTML = '';
+                    tooltip.style.display = 'none';
+                }
             });
 
             updateStats();
