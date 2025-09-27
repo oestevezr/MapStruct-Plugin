@@ -822,7 +822,7 @@ function getWebviewContent(
             right: 8px;
             top: 50%;
             transform: translateY(-50%);
-            width: 16px;
+            width: 56px;
             height: 12px;
             display: none;
             border-radius: 6px;
