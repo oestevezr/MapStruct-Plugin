@@ -844,29 +844,7 @@ function getWebviewContent(
             float: left;
         }
 
-        /* Paleta de colores para mapeos */
-        .mapping-color-0 { background: #007ACC; } /* Azul VS Code */
-        .mapping-color-1 { background: #28A745; } /* Verde */
-        .mapping-color-2 { background: #DC3545; } /* Rojo */
-        .mapping-color-3 { background: #FFC107; } /* Amarillo */
-        .mapping-color-4 { background: #6F42C1; } /* Púrpura */
-        .mapping-color-5 { background: #FD7E14; } /* Naranja */
-        .mapping-color-6 { background: #20C997; } /* Turquesa */
-        .mapping-color-7 { background: #E83E8C; } /* Rosa */
-        .mapping-color-8 { background: #6C757D; } /* Gris */
-        .mapping-color-9 { background: #17A2B8; } /* Cian */
-
-        /* Aplicar colores a bordes */
-        .mapped-color-0 { border-left-color: #007ACC !important; }
-        .mapped-color-1 { border-left-color: #28A745 !important; }
-        .mapped-color-2 { border-left-color: #DC3545 !important; }
-        .mapped-color-3 { border-left-color: #FFC107 !important; }
-        .mapped-color-4 { border-left-color: #6F42C1 !important; }
-        .mapped-color-5 { border-left-color: #FD7E14 !important; }
-        .mapped-color-6 { border-left-color: #20C997 !important; }
-        .mapped-color-7 { border-left-color: #E83E8C !important; }
-        .mapped-color-8 { border-left-color: #6C757D !important; }
-        .mapped-color-9 { border-left-color: #17A2B8 !important; }
+        /* Los colores ahora se aplican dinámicamente via JavaScript */
 
         /* Tooltip para mostrar información del mapeo */
         .mapping-tooltip {
@@ -961,13 +939,128 @@ function getWebviewContent(
         let selectedDaoFields = [];
         let mappings = [];
         let mappingHistory = [];
+        let usedColors = new Set(); // Para rastrear colores utilizados
+        let colorIndex = 0; // Índice del próximo color disponible
+        let colorPalette = []; // Paleta de colores generada dinámicamente
 
         // Inicializar interfaz
         document.addEventListener('DOMContentLoaded', function() {
+            generateColorPalette();
             renderDtoFields();
             renderDaoFields();
             updateStats();
         });
+
+        // Función para generar una paleta de 120 colores únicos y diversos
+        function generateColorPalette() {
+            colorPalette = [];
+            const totalColors = 120;
+
+            // Crear generador de números aleatorios con semilla para reproducibilidad
+            let seed = 12345;
+            function seededRandom() {
+                seed = (seed * 9301 + 49297) % 233280;
+                return seed / 233280;
+            }
+
+            // Estrategia 1: Colores base predefinidos de alta calidad (40 colores)
+            const baseColors = [
+                '#FF6B6B', '#4ECDC4', '#45B7D1', '#F39C12', '#9B59B6',
+                '#E74C3C', '#2ECC71', '#3498DB', '#F1C40F', '#8E44AD',
+                '#E67E22', '#1ABC9C', '#34495E', '#95A5A6', '#D35400',
+                '#27AE60', '#2980B9', '#8E44AD', '#F39C12', '#C0392B',
+                '#16A085', '#2C3E50', '#7F8C8D', '#D68910', '#A569BD',
+                '#DC7633', '#48C9B0', '#5DADE2', '#F7DC6F', '#BB8FCE',
+                '#85C1E9', '#82E0AA', '#F8C471', '#D7BDE2', '#AED6F1',
+                '#A3E4D7', '#FCF3CF', '#FADBD8', '#EBF5FB', '#E8F8F5'
+            ];
+
+            // Agregar colores base
+            baseColors.forEach(color => colorPalette.push(color));
+
+            // Estrategia 2: Colores aleatorios con alta saturación (40 colores)
+            for (let i = 0; i < 40; i++) {
+                const hue = Math.floor(seededRandom() * 360);
+                const saturation = 70 + Math.floor(seededRandom() * 30); // 70-100%
+                const lightness = 45 + Math.floor(seededRandom() * 25);  // 45-70%
+
+                const color = \`hsl(\${hue}, \${saturation}%, \${lightness}%)\`;
+                colorPalette.push(color);
+            }
+
+            // Estrategia 3: Colores complementarios y triádicos (40 colores)
+            for (let i = 0; i < 40; i++) {
+                const baseHue = Math.floor(seededRandom() * 360);
+                let hue;
+
+                if (i % 3 === 0) {
+                    // Color complementario (180° opuesto)
+                    hue = (baseHue + 180) % 360;
+                } else if (i % 3 === 1) {
+                    // Color triádico (120° separación)
+                    hue = (baseHue + 120) % 360;
+                } else {
+                    // Color triádico inverso (240° separación)
+                    hue = (baseHue + 240) % 360;
+                }
+
+                const saturation = 60 + Math.floor(seededRandom() * 40); // 60-100%
+                const lightness = 40 + Math.floor(seededRandom() * 30);  // 40-70%
+
+                const color = \`hsl(\${hue}, \${saturation}%, \${lightness}%)\`;
+                colorPalette.push(color);
+            }
+
+            // Mezclar la paleta para distribuir mejor los colores
+            shuffleArray(colorPalette);
+
+            console.log(\`🎨 Paleta de \${colorPalette.length} colores diversos generada\`);
+            console.log('🔍 Primeros 10 colores:', colorPalette.slice(0, 10));
+        }
+
+        // Función para mezclar un array (Fisher-Yates shuffle)
+        function shuffleArray(array) {
+            let seed = 54321;
+            function seededRandom() {
+                seed = (seed * 9301 + 49297) % 233280;
+                return seed / 233280;
+            }
+
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(seededRandom() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        // Función para obtener el siguiente color único
+        function getNextUniqueColor() {
+            // Buscar el primer color no utilizado
+            for (let i = 0; i < colorPalette.length; i++) {
+                if (!usedColors.has(i)) {
+                    usedColors.add(i);
+                    return i;
+                }
+            }
+
+            // Si todos los colores están en uso (muy improbable con 120 colores)
+            console.warn('⚠️ Todos los colores están en uso, reutilizando...');
+            const fallbackIndex = usedColors.size % colorPalette.length;
+            return fallbackIndex;
+        }
+
+        // Función para liberar un color cuando se elimina un mapeo
+        function releaseColor(colorIndex) {
+            // Verificar si el color ya no está siendo usado por ningún mapeo
+            const isStillUsed = mappings.some(mapping => mapping.color === colorIndex);
+            if (!isStillUsed) {
+                usedColors.delete(colorIndex);
+            }
+        }
+
+        // Función para obtener el color CSS de un índice
+        function getColorByIndex(index) {
+            return colorPalette[index] || '#007ACC'; // Fallback al azul VS Code
+        }
 
         function renderDtoFields() {
             const container = document.getElementById('dtoContainer');
@@ -1073,14 +1166,14 @@ function getWebviewContent(
                 mappingHistory.push([...mappings]);
 
                 // Crear nuevo mapeo con color único
-                const colorIndex = mappings.length % 10; // Ciclar entre 10 colores
+                const uniqueColor = getNextUniqueColor();
                 const newMapping = {
                     id: Date.now(),
                     dtoFields: [...selectedDtoFields],
                     daoFields: [...selectedDaoFields],
                     type: selectedDtoFields.length === 1 && selectedDaoFields.length === 1 ? '1:1' :
                           selectedDtoFields.length === 1 ? '1:N' : 'N:1',
-                    color: colorIndex
+                    color: uniqueColor
                 };
 
                 mappings.push(newMapping);
@@ -1124,13 +1217,13 @@ function getWebviewContent(
                     );
 
                     if (matchingDao && !mappings.some(m => m.dtoFields.some(df => df.name === dtoField.name))) {
-                        const colorIndex = mappings.length % 10;
+                        const uniqueColor = getNextUniqueColor();
                         mappings.push({
                             id: Date.now() + matched,
                             dtoFields: [dtoField],
                             daoFields: [matchingDao],
                             type: '1:1',
-                            color: colorIndex
+                            color: uniqueColor
                         });
                         matched++;
                     }
@@ -1151,8 +1244,11 @@ function getWebviewContent(
             // Limpiar estilos previos
             document.querySelectorAll('.mapped').forEach(el => {
                 el.classList.remove('mapped', 'multi-mapped');
-                for (let i = 0; i < 10; i++) {
-                    el.classList.remove(\`mapped-color-\${i}\`);
+                // Limpiar estilos de color dinámicos
+                el.style.borderLeftColor = '';
+                const indicator = el.querySelector('.mapping-indicator');
+                if (indicator) {
+                    indicator.style.backgroundColor = '';
                 }
             });
 
@@ -1191,11 +1287,14 @@ function getWebviewContent(
             if (fieldMappings.length === 1) {
                 // Mapeo simple - usar color único
                 const mapping = fieldMappings[0];
-                element.classList.add(\`mapped-color-\${mapping.color}\`);
+                const color = getColorByIndex(mapping.color);
+
+                // Aplicar color dinámicamente
+                element.style.borderLeftColor = color;
 
                 const indicator = element.querySelector('.mapping-indicator');
                 if (indicator) {
-                    indicator.className = \`mapping-indicator mapping-color-\${mapping.color}\`;
+                    indicator.style.backgroundColor = color;
                 }
 
                 // Agregar tooltip
@@ -1211,14 +1310,15 @@ function getWebviewContent(
 
                     fieldMappings.forEach(mapping => {
                         const stripe = document.createElement('div');
-                        stripe.className = \`color-stripe mapping-color-\${mapping.color}\`;
+                        stripe.className = 'color-stripe';
+                        stripe.style.backgroundColor = getColorByIndex(mapping.color);
                         stripe.style.width = \`\${stripeWidth}%\`;
                         multiIndicator.appendChild(stripe);
                     });
                 }
 
                 // Usar el color del primer mapeo para el borde
-                element.classList.add(\`mapped-color-\${fieldMappings[0].color}\`);
+                element.style.borderLeftColor = getColorByIndex(fieldMappings[0].color);
 
                 // Agregar tooltip
                 setupTooltip(element, fieldMappings, fieldType);
@@ -1236,8 +1336,9 @@ function getWebviewContent(
                 const typeLabel = mapping.type === '1:1' ? 'Uno a Uno' :
                                mapping.type === '1:N' ? 'Uno a Muchos' : 'Muchos a Uno';
 
+                const color = getColorByIndex(mapping.color);
                 tooltipContent += \`<div style="margin: 2px 0; padding: 2px; background: var(--vscode-editor-background); border-radius: 2px;">\`;
-                tooltipContent += \`<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--color-\${mapping.color}); margin-right: 4px;" class="mapping-color-\${mapping.color}"></span>\`;
+                tooltipContent += \`<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: \${color}; margin-right: 4px;"></span>\`;
                 tooltipContent += \`<span style="font-size: 10px;">\${typeLabel}</span>\`;
                 tooltipContent += \`</div>\`;
             });
@@ -1265,6 +1366,14 @@ function getWebviewContent(
 
         function clearMappings() {
             mappingHistory.push([...mappings]);
+
+            // Liberar todos los colores usados
+            mappings.forEach(mapping => {
+                if (mapping.color !== undefined) {
+                    usedColors.delete(mapping.color);
+                }
+            });
+
             mappings = [];
             selectedDtoFields = [];
             selectedDaoFields = [];
@@ -1272,14 +1381,14 @@ function getWebviewContent(
             // Limpiar estilos
             document.querySelectorAll('.mapped, .selected').forEach(el => {
                 el.classList.remove('mapped', 'selected', 'multi-mapped');
-                for (let i = 0; i < 10; i++) {
-                    el.classList.remove(\`mapped-color-\${i}\`);
-                }
+
+                // Limpiar estilos dinámicos
+                el.style.borderLeftColor = '';
 
                 // Limpiar indicadores
                 const indicator = el.querySelector('.mapping-indicator');
                 if (indicator) {
-                    indicator.className = 'mapping-indicator';
+                    indicator.style.backgroundColor = '';
                 }
 
                 const multiIndicator = el.querySelector('.multi-color-indicator');
@@ -1304,7 +1413,24 @@ function getWebviewContent(
 
         function undoMapping() {
             if (mappingHistory.length > 0) {
+                // Liberar colores de los mapeos actuales
+                mappings.forEach(mapping => {
+                    if (mapping.color !== undefined) {
+                        releaseColor(mapping.color);
+                    }
+                });
+
+                // Restaurar mapeos anteriores
                 mappings = mappingHistory.pop();
+
+                // Recalcular colores usados
+                usedColors.clear();
+                mappings.forEach(mapping => {
+                    if (mapping.color !== undefined) {
+                        usedColors.add(mapping.color);
+                    }
+                });
+
                 renderDtoFields();
                 renderDaoFields();
                 markMappedFields();
