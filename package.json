@@ -20,6 +20,10 @@
         "title": "MapStruct: Generar Mapper desde DTO/DAO"
       },
       {
+        "command": "mapstruct-generator.showMainMenu",
+        "title": "MapStruct: Menú Principal"
+      },
+      {
         "command": "mapstruct-generator.mapFromProject",
         "title": "Mapear desde proyecto",
         "icon": "$(file-directory)"
@@ -27,8 +31,7 @@
       {
         "command": "mapstruct-generator.mapFromPreview",
         "title": "Mapear con Preview URL",
-        "icon": "$(globe)",
-        "enablement": "false"
+        "icon": "$(globe)"
       },
       {
         "command": "mapstruct-generator.mapFromImages",

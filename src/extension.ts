@@ -37,11 +37,11 @@ class MapStructSidebarProvider implements vscode.TreeDataProvider<MapStructMenuI
                 ),
                 new MapStructMenuItem(
                     'Mapear con Preview URL',
-                    'Generar mapeos desde una URL de preview (próximamente)',
+                    'Generar mapeos desde una URL de preview',
                     vscode.TreeItemCollapsibleState.None,
                     'mapstruct-generator.mapFromPreview',
                     new vscode.ThemeIcon('globe'),
-                    false
+                    true
                 ),
                 new MapStructMenuItem(
                     'Mapear con imágenes',
@@ -407,10 +407,16 @@ export function activate(context: vscode.ExtensionContext) {
         await executeMapFromProject();
     });
 
-    // Registrar comandos deshabilitados (placeholder para futuras funcionalidades)
+    // Registrar comando para mostrar menú principal
+    let showMainMenuDisposable = vscode.commands.registerCommand('mapstruct-generator.showMainMenu', async () => {
+        console.log('🎯 [DEBUG] Comando showMainMenu ejecutado');
+        await showMainMenu();
+    });
+
+    // Registrar comando para "Mapear con Preview URL"
     let mapFromPreviewDisposable = vscode.commands.registerCommand('mapstruct-generator.mapFromPreview', async () => {
-        console.log('🎯 [DEBUG] Comando mapFromPreview ejecutado (placeholder)');
-        vscode.window.showInformationMessage('🚧 Funcionalidad en desarrollo: Mapear con Preview URL');
+        console.log('🎯 [DEBUG] Comando mapFromPreview ejecutado');
+        await executeMapFromPreview();
     });
 
     let mapFromImagesDisposable = vscode.commands.registerCommand('mapstruct-generator.mapFromImages', async () => {
@@ -482,10 +488,566 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
+    // Función para mostrar el menú principal
+    async function showMainMenu() {
+        const options = [
+            {
+                label: '📄 Mapear desde proyecto',
+                description: 'Analizar estructura del proyecto y generar mapeos',
+                action: 'project'
+            },
+            {
+                label: '🌐 Mapear con Preview URL',
+                description: 'Generar mapeos desde una URL de preview',
+                action: 'preview'
+            }
+        ];
+
+        const selection = await vscode.window.showQuickPick(options, {
+            title: 'MapStruct Generator - Selecciona una opción',
+            placeHolder: 'Elige el método de mapeo que deseas utilizar'
+        });
+
+        if (!selection) {
+            vscode.window.showInformationMessage('Operación cancelada por el usuario.');
+            return;
+        }
+
+        switch (selection.action) {
+            case 'project':
+                await executeMapFromProject();
+                break;
+            case 'preview':
+                await executeMapFromPreview();
+                break;
+        }
+    }
+
+    // Función para ejecutar mapeo desde Preview URL usando webview modal
+    async function executeMapFromPreview() {
+        try {
+            console.log('🎯 [DEBUG] Iniciando proceso de Preview URL con webview modal');
+
+            // Crear webview modal para input de usuario
+            createPreviewInputWebview(context);
+
+        } catch (error) {
+            console.error('❌ [DEBUG] Error en executeMapFromPreview:', error);
+            vscode.window.showErrorMessage(`Error iniciando proceso de preview: ${error}`);
+        }
+    }
+
+    // Función para crear webview modal de input
+    function createPreviewInputWebview(context: vscode.ExtensionContext) {
+        // Crear panel modal para input
+        const panel = vscode.window.createWebviewPanel(
+            'previewInput',
+            'MapStruct - Configuración Preview URL',
+            vscode.ViewColumn.Active,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true // Importante: mantener contexto
+            }
+        );
+
+        // Manejar mensajes desde el webview
+        panel.webview.onDidReceiveMessage(
+            async message => {
+                switch (message.command) {
+                    case 'submitConfig':
+                        await processPreviewConfiguration(message.data, panel, context);
+                        break;
+                    case 'cancel':
+                        panel.dispose();
+                        vscode.window.showInformationMessage('Configuración de Preview URL cancelada');
+                        break;
+                }
+            },
+            undefined,
+            context.subscriptions
+        );
+
+        // Establecer contenido HTML del webview modal
+        panel.webview.html = getPreviewInputWebviewContent();
+    }
+
+    // Función para procesar la configuración del preview
+    async function processPreviewConfiguration(data: any, inputPanel: vscode.WebviewPanel, context: vscode.ExtensionContext) {
+        try {
+            console.log('🔄 [DEBUG] Procesando configuración de preview:', data);
+
+            let authHeaders = {};
+
+            // Procesar cookies si se proporcionaron
+            if (data.needsAuth && data.cookies) {
+                const extractedCookies = extractRequiredCookies(data.cookies);
+
+                if (extractedCookies) {
+                    authHeaders = { 'Cookie': extractedCookies };
+                    console.log(`✅ [DEBUG] Cookies extraídas: ${extractedCookies.split(';').length} cookie(s) válida(s)`);
+                } else {
+                    console.warn('⚠️ [DEBUG] No se encontraron cookies válidas');
+                    vscode.window.showWarningMessage('No se encontraron cookies válidas. Continuando sin autenticación...');
+                }
+            }
+
+            // Mostrar progreso en el panel de input
+            inputPanel.webview.postMessage({
+                command: 'showProgress',
+                message: '🌐 Obteniendo datos del preview...'
+            });
+
+            // Realizar petición HTTP
+            const mappingData = await fetchMappingData(data.url, authHeaders);
+
+            if (mappingData) {
+                // Cerrar panel de input
+                inputPanel.dispose();
+
+                // Crear webview principal con los datos
+                createPreviewMappingWebview(context, context.extensionUri, mappingData, data.url);
+                vscode.window.showInformationMessage('✅ Mapeos cargados exitosamente desde Preview URL');
+            } else {
+                // Mostrar error en el panel
+                inputPanel.webview.postMessage({
+                    command: 'showError',
+                    message: 'No se pudieron obtener datos válidos del preview'
+                });
+            }
+
+        } catch (error) {
+            console.error('❌ [DEBUG] Error procesando configuración:', error);
+
+            // Mostrar error en el panel
+            inputPanel.webview.postMessage({
+                command: 'showError',
+                message: `Error: ${error}`
+            });
+        }
+    }
+
     // Registrar comandos en el contexto
-    context.subscriptions.push(disposable, mapFromProjectDisposable, mapFromPreviewDisposable, mapFromImagesDisposable);
+    context.subscriptions.push(disposable, showMainMenuDisposable, mapFromProjectDisposable, mapFromPreviewDisposable, mapFromImagesDisposable);
 
     console.log('📋 [DEBUG] Extensión "mapstruct-generator" completamente activada');
+}
+
+/**
+ * Función para extraer cookies específicas del texto pegado por el usuario
+ */
+function extractRequiredCookies(cookiesText: string): string | null {
+    console.log('🍪 [DEBUG] Extrayendo cookies específicas...');
+    console.log('📋 [DEBUG] Texto de cookies recibido:', cookiesText);
+
+    // Cookies que necesitamos extraer
+    const requiredCookies = ['__Host-GCP_IAP_AUTH_TOKEN_C2D51EA19EA3A213', 'GCP_IAP_UID'];
+    const extractedCookies: string[] = [];
+
+    try {
+        // Limpiar el texto y dividir por punto y coma
+        const cookiePairs = cookiesText
+            .split(';')
+            .map(pair => pair.trim())
+            .filter(pair => pair.length > 0);
+
+        console.log('📋 [DEBUG] Pares de cookies encontrados:', cookiePairs);
+
+        // Buscar cada cookie requerida
+        for (const requiredCookie of requiredCookies) {
+            for (const cookiePair of cookiePairs) {
+                // Verificar si esta cookie coincide con la que buscamos
+                if (cookiePair.toLowerCase().startsWith(requiredCookie.toLowerCase() + '=')) {
+                    // Extraer el valor completo (incluyendo el nombre)
+                    const [name, ...valueParts] = cookiePair.split('=');
+                    const value = valueParts.join('='); // En caso de que el valor contenga '='
+
+                    if (value && value.trim().length > 0) {
+                        extractedCookies.push(`${name.trim()}=${value.trim()}`);
+                        console.log(`✅ [DEBUG] Cookie extraída: ${name.trim()}=${value.trim()}`);
+                    }
+                    break; // Solo tomar la primera coincidencia
+                }
+            }
+        }
+
+        if (extractedCookies.length === 0) {
+            console.warn('⚠️ [DEBUG] No se encontraron cookies válidas');
+            return null;
+        }
+
+        const result = extractedCookies.join('; ');
+        console.log(`🎉 [DEBUG] Cookies finales extraídas: ${result}`);
+        return result;
+
+    } catch (error) {
+        console.error('❌ [DEBUG] Error extrayendo cookies:', error);
+        return null;
+    }
+}
+
+/**
+ * Función para obtener datos de mapeo desde una URL
+ */
+async function fetchMappingData(url: string, authHeaders: any): Promise<any> {
+    try {
+        console.log(`🌐 [DEBUG] Realizando petición GET a: ${url}`);
+
+        // Usar fetch nativo de Node.js (disponible desde Node 18+)
+        const headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'MapStruct-Generator-VSCode/1.0.0',
+            ...authHeaders
+        };
+
+        // Crear AbortController para timeout manual
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: headers,
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json() as any;
+        console.log('✅ [DEBUG] Datos obtenidos exitosamente');
+        console.log('📋 [DEBUG] Estructura de datos:', JSON.stringify(data, null, 2));
+
+        // Validate the basic structure of the response
+        if (!data || typeof data !== 'object') {
+            throw new Error('Invalid response: data is not an object');
+        }
+
+        // Check if this is the expected structure for transformation
+        if (!data.data.id || !data.data.details || !Array.isArray(data.data.details)) {
+            console.log('⚠️ [DEBUG] Response does not match expected structure for transformation, returning raw data');
+            return data;
+        }
+
+        // Part 1: Identify Backend Information
+        const id = data.data.id;
+
+        const backendAccessObj = data.data.details.find((detail: any) => detail.key === "backendAccess");
+        if (!backendAccessObj) {
+            throw new Error('Backend access information not found in response');
+        }
+
+        if (!backendAccessObj.value || !backendAccessObj.value.type || !backendAccessObj.value.backendIdentifier) {
+            throw new Error('Invalid backend access object: missing required fields');
+        }
+
+        const backend_type = backendAccessObj.value.type;
+        const trx_name = backendAccessObj.value.backendIdentifier;
+
+        // Part 2: Map Service Fields
+        // Find all serviceMapping entries (they are individual objects, not an array)
+        const serviceMappingObjs = data.data.details.filter((detail: any) => detail.key === "serviceMapping");
+        if (serviceMappingObjs.length === 0) {
+            throw new Error('No service mapping information found in response');
+        }
+
+        console.log(`🔍 [DEBUG] Found ${serviceMappingObjs.length} service mapping entries`);
+
+        // Filter mappings that match our backend ID
+        const matchingMappings = serviceMappingObjs.filter((mappingObj: any) =>
+            mappingObj.value &&
+            mappingObj.value.backend &&
+            mappingObj.value.backend.id === trx_name
+        );
+
+        if (matchingMappings.length === 0) {
+            throw new Error(`No matching service mappings found for backend ID: ${trx_name}`);
+        }
+
+        console.log(`🎯 [DEBUG] Found ${matchingMappings.length} matching mappings for backend: ${trx_name}`);
+
+        const input_fields: any[] = [];
+        const output_fields: any[] = [];
+
+        // Process each matching service mapping entry
+        matchingMappings.forEach((mappingObj: any) => {
+            const item = mappingObj.value;
+
+            // Validate item structure
+            if (!item || typeof item !== 'object') {
+                console.warn('⚠️ [DEBUG] Skipping invalid service mapping item:', item);
+                return;
+            }
+
+            if (!item.inputOutput || !item.external || !item.internal) {
+                console.warn('⚠️ [DEBUG] Skipping service mapping item with missing required fields:', item);
+                return;
+            }
+
+            console.log(`🔄 [DEBUG] Processing ${item.inputOutput} field: ${item.external} -> ${item.internal}`);
+
+            if (item.inputOutput === "input") {
+                // Input field processing
+                let field_type: string;
+                if (item.external.startsWith('{')) {
+                    // Note: User input might be required to distinguish between "uri-param" and "header"
+                    field_type = "uri-param"; // Default assumption
+                } else {
+                    field_type = "body";
+                }
+
+                const source = item.external;
+
+                // Process target and format from item.internal
+                let format = "";
+                let target = "";
+                if (/\w+-\w+/.test(item.internal)) {
+                    const parts = item.internal.split('-');
+                    format = parts[0];
+                    target = parts[1].toLowerCase();
+                } else {
+                    format = "";
+                    target = item.internal.toLowerCase();
+                }
+
+                input_fields.push({
+                    format,
+                    field_type,
+                    source,
+                    target
+                });
+            } else {
+                // Output field processing (assuming item.inputOutput === "output")
+                let field_type: string;
+                if (item.external.startsWith('{')) {
+                    // Note: User input might be required to distinguish between "uri-param" and "header"
+                    field_type = "header"; // Default assumption for output
+                } else {
+                    field_type = "body";
+                }
+
+                const target = item.external;
+
+                // Process source and format from item.internal
+                let format = "";
+                let source = "";
+                if (/\w+-\w+/.test(item.internal)) {
+                    const parts = item.internal.split('-');
+                    format = parts[0];
+                    source = parts[1].toLowerCase();
+                } else {
+                    format = "";
+                    source = item.internal.toLowerCase();
+                }
+
+                output_fields.push({
+                    format,
+                    field_type,
+                    source,
+                    target
+                });
+            }
+        });
+
+        // Construct and return the transformed JSON object
+        const transformedData = {
+            id,
+            mappings: [
+                {
+                    backend_type,
+                    trx_name,
+                    fields: {
+                        input_fields,
+                        output_fields
+                    }
+                }
+            ]
+        };
+
+        console.log('🔄 [DEBUG] Data transformed successfully');
+        console.log('📋 [DEBUG] Transformed structure:', JSON.stringify(transformedData, null, 2));
+
+        // Print detailed mapping information
+        console.log('🎯 [DEBUG] MAPEO GENERADO:');
+        console.log('📍 [DEBUG] ID:', id);
+        console.log('🏗️ [DEBUG] Backend Type:', backend_type);
+        console.log('🔗 [DEBUG] Transaction Name:', trx_name);
+        console.log('📥 [DEBUG] Input Fields:', input_fields.length);
+        input_fields.forEach((field, index) => {
+            console.log(`  ${index + 1}. ${field.source} -> ${field.target} (${field.field_type}) [${field.format}]`);
+        });
+        console.log('📤 [DEBUG] Output Fields:', output_fields.length);
+        output_fields.forEach((field, index) => {
+            console.log(`  ${index + 1}. ${field.source} -> ${field.target} (${field.field_type}) [${field.format}]`);
+        });
+        console.log('✅ [DEBUG] MAPEO COMPLETO GENERADO');
+
+        return transformedData;
+
+    } catch (error) {
+        console.error('❌ [DEBUG] Error en fetchMappingData:', error);
+
+        if (error instanceof TypeError && error.message.includes('fetch')) {
+            throw new Error('Error de conexión. Verifica la URL y tu conexión a internet.');
+        } else if (error instanceof SyntaxError) {
+            throw new Error('La respuesta no es un JSON válido.');
+        } else {
+            throw error;
+        }
+    }
+}
+
+/**
+ * Función para normalizar y formatear datos de mapeo desde diferentes formatos
+ */
+function formatMappingData(rawData: any): { dtoFields: GroupedFields; daoFields: JavaField[] } {
+    console.log('🔄 [DEBUG] Formateando datos de mapeo...');
+
+    // Estructura esperada genérica
+    let dtoFields: GroupedFields = {};
+    let daoFields: JavaField[] = [];
+
+    try {
+        // Intento 1: Estructura directa con dtoFields y daoFields
+        if (rawData.dtoFields && rawData.daoFields) {
+            dtoFields = rawData.dtoFields;
+            daoFields = rawData.daoFields;
+        }
+        // Intento 2: Estructura con mappings que contiene source y target
+        else if (rawData.mappings) {
+            const mappings = rawData.mappings;
+
+            // Extraer campos DTO (source)
+            if (mappings.source) {
+                dtoFields = mappings.source;
+            }
+
+            // Extraer campos DAO (target)
+            if (mappings.target && Array.isArray(mappings.target)) {
+                daoFields = mappings.target;
+            }
+        }
+        // Intento 3: Estructura plana con arrays
+        else if (rawData.dto && rawData.dao) {
+            // Convertir arrays planos a formato agrupado
+            if (Array.isArray(rawData.dto)) {
+                rawData.dto.forEach((field: any) => {
+                    const className = field.className || 'DefaultDTO';
+                    if (!dtoFields[className]) {
+                        dtoFields[className] = [];
+                    }
+                    dtoFields[className].push({
+                        name: field.name || field.fieldName,
+                        type: field.type || field.fieldType || 'String',
+                        className: className
+                    });
+                });
+            }
+
+            if (Array.isArray(rawData.dao)) {
+                daoFields = rawData.dao.map((field: any) => ({
+                    name: field.name || field.fieldName,
+                    type: field.type || field.fieldType || 'String',
+                    className: field.className || 'DefaultDAO'
+                }));
+            }
+        }
+        // Intento 4: Datos de ejemplo si no se puede parsear
+        else {
+            console.warn('⚠️ [DEBUG] Formato no reconocido, usando datos de ejemplo');
+
+            dtoFields = {
+                'UserDTO': [
+                    { name: 'id', type: 'Long', className: 'UserDTO' },
+                    { name: 'username', type: 'String', className: 'UserDTO' },
+                    { name: 'email', type: 'String', className: 'UserDTO' }
+                ],
+                'ProfileDTO': [
+                    { name: 'firstName', type: 'String', className: 'ProfileDTO' },
+                    { name: 'lastName', type: 'String', className: 'ProfileDTO' }
+                ]
+            };
+
+            daoFields = [
+                { name: 'userId', type: 'Long', className: 'User' },
+                { name: 'userName', type: 'String', className: 'User' },
+                { name: 'userEmail', type: 'String', className: 'User' },
+                { name: 'firstName', type: 'String', className: 'Profile' },
+                { name: 'lastName', type: 'String', className: 'Profile' }
+            ];
+        }
+
+        console.log('✅ [DEBUG] Datos formateados exitosamente');
+        console.log(`📊 [DEBUG] DTO Fields: ${Object.keys(dtoFields).length} clases`);
+        console.log(`📊 [DEBUG] DAO Fields: ${daoFields.length} campos`);
+
+        return { dtoFields, daoFields };
+
+    } catch (error) {
+        console.error('❌ [DEBUG] Error formateando datos:', error);
+
+        // Retornar estructura vacía en caso de error
+        return {
+            dtoFields: {},
+            daoFields: []
+        };
+    }
+}
+
+/**
+ * Crea el webview para mostrar mapeos obtenidos desde Preview URL
+ */
+function createPreviewMappingWebview(
+    context: vscode.ExtensionContext,
+    extensionUri: vscode.Uri,
+    rawData: any,
+    sourceUrl: string
+) {
+    console.log('🖥️ [DEBUG] Creando webview para preview mappings...');
+
+    // Formatear los datos recibidos
+    const { dtoFields, daoFields } = formatMappingData(rawData);
+
+    // Validar que tenemos datos para mostrar
+    if (Object.keys(dtoFields).length === 0 && daoFields.length === 0) {
+        vscode.window.showWarningMessage('No se encontraron datos de mapeo válidos en la URL proporcionada.');
+        return;
+    }
+
+    // Crear el panel del webview
+    const panel = vscode.window.createWebviewPanel(
+        'previewMapping',
+        'MapStruct - Preview Mappings',
+        vscode.ViewColumn.One,
+        {
+            enableScripts: true,
+            localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')]
+        }
+    );
+
+    // Manejar mensajes desde el webview
+    panel.webview.onDidReceiveMessage(
+        message => {
+            switch (message.command) {
+                case 'generateMapstruct':
+                    generateMapstructFromPreview(message.mappings, sourceUrl, rawData);
+                    break;
+                case 'refreshData':
+                    vscode.window.showInformationMessage('Datos actualizados desde Preview URL');
+                    break;
+            }
+        },
+        undefined,
+        context.subscriptions
+    );
+
+    // Contar totales para estadísticas
+    const totalDtoFields = Object.values(dtoFields).reduce((total, fields) => total + fields.length, 0);
+    const totalDaoFields = daoFields.length;
+
+    // Establecer el contenido HTML del webview
+    panel.webview.html = getPreviewWebviewContent(dtoFields, daoFields, totalDtoFields, totalDaoFields, sourceUrl);
 }
 
 /**
@@ -549,11 +1111,33 @@ function generateMapstructConfig(mappings: any[]) {
     const jsonOutput = {
         timestamp: new Date().toISOString(),
         totalMappings: mappings.length,
-        mappings: mappings
+        mappings: mappings,
+        source: 'project-analysis'
     };
 
     console.log('📄 [DEBUG] JSON generado:', JSON.stringify(jsonOutput, null, 2));
     vscode.window.showInformationMessage(`MapStruct generado con ${mappings.length} mapeos. Ver consola para detalles.`);
+}
+
+/**
+ * Genera la configuración de MapStruct desde preview URL
+ */
+function generateMapstructFromPreview(mappings: any[], sourceUrl: string, originalData: any) {
+    console.log('🔧 [DEBUG] Generando configuración MapStruct desde Preview URL...');
+    console.log('📋 [DEBUG] Mapeos recibidos:', JSON.stringify(mappings, null, 2));
+
+    // TODO: Integrar con API para generar código MapStruct real
+    const jsonOutput = {
+        timestamp: new Date().toISOString(),
+        totalMappings: mappings.length,
+        mappings: mappings,
+        source: 'preview-url',
+        sourceUrl: sourceUrl,
+        originalData: originalData
+    };
+
+    console.log('📄 [DEBUG] JSON generado desde Preview:', JSON.stringify(jsonOutput, null, 2));
+    vscode.window.showInformationMessage(`MapStruct generado con ${mappings.length} mapeos desde Preview URL. Ver consola para detalles.`);
 }
 
 /**
@@ -1510,6 +2094,751 @@ function getWebviewContent(
 
             document.getElementById('statusText').textContent = statusText;
         }
+    </script>
+</body>
+</html>`;
+}
+
+/**
+ * Genera el contenido HTML para el webview de preview mappings.
+ */
+function getPreviewWebviewContent(
+    dtoFields: GroupedFields,
+    daoFields: JavaField[],
+    totalDtoFields: number,
+    totalDaoFields: number,
+    sourceUrl: string
+): string {
+    const dtoFieldsJson = JSON.stringify(dtoFields);
+    const daoFieldsJson = JSON.stringify(daoFields);
+
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapStruct - Preview Mappings</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+            overflow-x: hidden;
+        }
+
+        .header {
+            background: var(--vscode-panel-background);
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: var(--vscode-foreground);
+        }
+
+        .source-info {
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            margin-bottom: 8px;
+            display: inline-block;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .controls {
+            background: var(--vscode-panel-background);
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        .btn:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .btn.primary {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            font-size: 16px;
+            padding: 12px 24px;
+        }
+
+        .preview-info {
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            text-align: center;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 200px);
+        }
+
+        .panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--vscode-panel-border);
+        }
+
+        .panel:last-child {
+            border-right: none;
+        }
+
+        .panel-header {
+            background: var(--vscode-panel-background);
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .fields-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .field-group {
+            margin-bottom: 16px;
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .group-header {
+            background: var(--vscode-panel-background);
+            padding: 12px 16px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
+        }
+
+        .group-header:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .group-toggle {
+            transition: transform 0.2s;
+        }
+
+        .group-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .fields-list {
+            background: var(--vscode-editor-background);
+        }
+
+        .fields-list.collapsed {
+            display: none;
+        }
+
+        .field-item {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            position: relative;
+        }
+
+        .field-item:last-child {
+            border-bottom: none;
+        }
+
+        .field-name {
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+
+        .field-type {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .dao-field-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .dao-field-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-bar {
+            background: var(--vscode-statusBar-background);
+            color: var(--vscode-statusBar-foreground);
+            padding: 8px 20px;
+            border-top: 1px solid var(--vscode-panel-border);
+            font-size: 12px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>MapStruct - Preview Mappings</h1>
+        <div class="source-info">🌐 Datos desde Preview URL</div>
+        <div class="stats">
+            <span>DTO: ${totalDtoFields} campos</span>
+            <span>DAO: ${totalDaoFields} campos</span>
+            <span>Fuente: Preview URL</span>
+        </div>
+    </div>
+
+    <div class="preview-info">
+        📡 Datos obtenidos desde: <strong>${sourceUrl}</strong>
+    </div>
+
+    <div class="controls">
+        <button class="btn primary" onclick="generateMapstruct()">⚡ Generar MapStruct</button>
+        <button class="btn" onclick="refreshData()">🔄 Actualizar Datos</button>
+    </div>
+
+    <div class="main-container">
+        <div class="panel">
+            <div class="panel-header">📄 Campos DTO (Preview)</div>
+            <div class="fields-container" id="dtoContainer"></div>
+        </div>
+        <div class="panel">
+            <div class="panel-header">🏗️ Campos DAO (Preview)</div>
+            <div class="fields-container" id="daoContainer"></div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        Vista previa de mapeos obtenidos desde URL externa • Solo visualización • Use "Generar MapStruct" para procesar
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+
+        // Estado global
+        let dtoFields = ${dtoFieldsJson};
+        let daoFields = ${daoFieldsJson};
+
+        // Inicializar interfaz
+        document.addEventListener('DOMContentLoaded', function() {
+            renderDtoFields();
+            renderDaoFields();
+        });
+
+        function renderDtoFields() {
+            const container = document.getElementById('dtoContainer');
+            container.innerHTML = '';
+
+            for (const [className, fields] of Object.entries(dtoFields)) {
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'field-group';
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'group-header';
+                headerDiv.onclick = () => toggleGroup(headerDiv);
+                headerDiv.innerHTML = \`
+                    <span>\${className} (\${fields.length})</span>
+                    <span class="group-toggle">▼</span>
+                \`;
+
+                const fieldsDiv = document.createElement('div');
+                fieldsDiv.className = 'fields-list';
+
+                fields.forEach(field => {
+                    const fieldDiv = document.createElement('div');
+                    fieldDiv.className = 'field-item';
+                    fieldDiv.innerHTML = \`
+                        <div class="field-name">\${field.name}</div>
+                        <div class="field-type">\${field.type}</div>
+                    \`;
+                    fieldsDiv.appendChild(fieldDiv);
+                });
+
+                groupDiv.appendChild(headerDiv);
+                groupDiv.appendChild(fieldsDiv);
+                container.appendChild(groupDiv);
+            }
+        }
+
+        function renderDaoFields() {
+            const container = document.getElementById('daoContainer');
+            container.innerHTML = '';
+
+            daoFields.forEach(field => {
+                const fieldDiv = document.createElement('div');
+                fieldDiv.className = 'dao-field-item';
+                fieldDiv.innerHTML = \`
+                    <div class="field-name">\${field.name}</div>
+                    <div class="field-type">\${field.type} <span style="font-size: 11px;">(\${field.className})</span></div>
+                \`;
+                container.appendChild(fieldDiv);
+            });
+        }
+
+        function toggleGroup(header) {
+            const toggle = header.querySelector('.group-toggle');
+            const fieldsList = header.nextElementSibling;
+
+            fieldsList.classList.toggle('collapsed');
+            toggle.classList.toggle('collapsed');
+        }
+
+        function generateMapstruct() {
+            // Simular mapeos automáticos para preview
+            const autoMappings = [];
+
+            for (const [className, fields] of Object.entries(dtoFields)) {
+                fields.forEach(dtoField => {
+                    const matchingDao = daoFields.find(daoField =>
+                        daoField.name.toLowerCase() === dtoField.name.toLowerCase()
+                    );
+
+                    if (matchingDao) {
+                        autoMappings.push({
+                            id: Date.now() + Math.random(),
+                            dtoFields: [dtoField],
+                            daoFields: [matchingDao],
+                            type: '1:1',
+                            source: 'preview-auto'
+                        });
+                    }
+                });
+            }
+
+            vscode.postMessage({
+                command: 'generateMapstruct',
+                mappings: autoMappings
+            });
+        }
+
+        function refreshData() {
+            vscode.postMessage({
+                command: 'refreshData'
+            });
+        }
+    </script>
+</body>
+</html>`;
+}
+
+/**
+ * Genera el contenido HTML para el webview de configuración de Preview URL.
+ */
+function getPreviewInputWebviewContent(): string {
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapStruct - Configuración Preview URL</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: var(--vscode-panel-background);
+            border-radius: 8px;
+            border: 1px solid var(--vscode-panel-border);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: var(--vscode-foreground);
+        }
+
+        .header p {
+            color: var(--vscode-descriptionForeground);
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--vscode-foreground);
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            background: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            color: var(--vscode-input-foreground);
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--vscode-focusBorder);
+            box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+            font-family: 'Courier New', Consolas, monospace;
+        }
+
+        .form-group .help-text {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 4px;
+        }
+
+        .auth-section {
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+            margin-right: 10px;
+        }
+
+        .cookies-section {
+            display: none;
+            margin-top: 15px;
+        }
+
+        .cookies-section.visible {
+            display: block;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid var(--vscode-panel-border);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .btn-secondary:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        .progress {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-radius: 6px;
+            margin-top: 20px;
+        }
+
+        .progress.visible {
+            display: block;
+        }
+
+        .error {
+            display: none;
+            padding: 15px;
+            background: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            border-radius: 6px;
+            margin-top: 20px;
+            color: var(--vscode-inputValidation-errorForeground);
+        }
+
+        .error.visible {
+            display: block;
+        }
+
+        .cookie-info {
+            background: var(--vscode-textBlockQuote-background);
+            border-left: 4px solid var(--vscode-textBlockQuote-border);
+            padding: 12px;
+            margin-top: 10px;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .cookie-info h4 {
+            margin-bottom: 8px;
+            color: var(--vscode-foreground);
+        }
+
+        .cookie-info ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+
+        .cookie-info li {
+            font-family: 'Courier New', Consolas, monospace;
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌐 Configuración Preview URL</h1>
+            <p>Configure la conexión para obtener mapeos desde una URL externa</p>
+        </div>
+
+        <form id="configForm">
+            <div class="form-group">
+                <label for="url">URL del Endpoint de Preview *</label>
+                <input
+                    type="url"
+                    id="url"
+                    name="url"
+                    required
+                    placeholder="https://api.ejemplo.com/preview/mappings"
+                    autocomplete="off"
+                >
+                <div class="help-text">Ingresa la URL completa del endpoint que contiene los datos de mapeo</div>
+            </div>
+
+            <div class="auth-section">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="needsAuth" name="needsAuth">
+                    <label for="needsAuth">Requiere cookies de autenticación</label>
+                </div>
+
+                <div class="cookies-section" id="cookiesSection">
+                    <div class="form-group">
+                        <label for="cookies">Cookies de Autenticación</label>
+                        <textarea
+                            id="cookies"
+                            name="cookies"
+                            placeholder="Pega aquí las cookies en formato: cookie1=valor; cookie2=valor; cookie3=valor"
+                            autocomplete="off"
+                        ></textarea>
+                        <div class="help-text">Se extraerán automáticamente solo las cookies necesarias para la autenticación</div>
+
+                        <div class="cookie-info">
+                            <h4>Cookies que se extraerán:</h4>
+                            <ul>
+                                <li>__Host-GCP_IAP_AUTH_TOKEN_C2D51EA19EA3A213</li>
+                                <li>GCP_IAP_UID</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="buttons">
+                <button type="button" class="btn btn-secondary" onclick="cancel()">Cancelar</button>
+                <button type="submit" class="btn btn-primary" id="submitBtn">Conectar y Obtener Datos</button>
+            </div>
+        </form>
+
+        <div class="progress" id="progress">
+            <div id="progressMessage">🔄 Procesando...</div>
+        </div>
+
+        <div class="error" id="error">
+            <div id="errorMessage"></div>
+        </div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+
+        // Manejar checkbox de autenticación
+        document.getElementById('needsAuth').addEventListener('change', function() {
+            const cookiesSection = document.getElementById('cookiesSection');
+            if (this.checked) {
+                cookiesSection.classList.add('visible');
+            } else {
+                cookiesSection.classList.remove('visible');
+                document.getElementById('cookies').value = '';
+            }
+        });
+
+        // Manejar envío del formulario
+        document.getElementById('configForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const url = document.getElementById('url').value.trim();
+            const needsAuth = document.getElementById('needsAuth').checked;
+            const cookies = document.getElementById('cookies').value.trim();
+
+            // Validaciones
+            if (!url) {
+                showError('La URL es requerida');
+                return;
+            }
+
+            try {
+                new URL(url);
+            } catch (e) {
+                showError('Por favor ingresa una URL válida');
+                return;
+            }
+
+            if (needsAuth && !cookies) {
+                showError('Las cookies son requeridas cuando se habilita la autenticación');
+                return;
+            }
+
+            // Preparar datos
+            const data = {
+                url: url,
+                needsAuth: needsAuth,
+                cookies: needsAuth ? cookies : null
+            };
+
+            // Mostrar progreso
+            showProgress('🌐 Conectando y obteniendo datos...');
+
+            // Deshabilitar formulario
+            document.getElementById('submitBtn').disabled = true;
+
+            // Enviar datos a la extensión
+            vscode.postMessage({
+                command: 'submitConfig',
+                data: data
+            });
+        });
+
+        // Función para cancelar
+        function cancel() {
+            vscode.postMessage({
+                command: 'cancel'
+            });
+        }
+
+        // Funciones de utilidad
+        function showProgress(message) {
+            document.getElementById('progressMessage').textContent = message;
+            document.getElementById('progress').classList.add('visible');
+            document.getElementById('error').classList.remove('visible');
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('error').classList.add('visible');
+            document.getElementById('progress').classList.remove('visible');
+            document.getElementById('submitBtn').disabled = false;
+        }
+
+        function hideMessages() {
+            document.getElementById('progress').classList.remove('visible');
+            document.getElementById('error').classList.remove('visible');
+        }
+
+        // Manejar mensajes desde la extensión
+        window.addEventListener('message', event => {
+            const message = event.data;
+
+            switch (message.command) {
+                case 'showProgress':
+                    showProgress(message.message);
+                    break;
+                case 'showError':
+                    showError(message.message);
+                    break;
+            }
+        });
+
+        // Enfocar el campo URL al cargar
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('url').focus();
+        });
     </script>
 </body>
 </html>`;
