@@ -426,6 +426,144 @@ export function activate(context: vscode.ExtensionContext) {
 
     console.log('📋 [DEBUG] Todos los comandos registrados correctamente');
 
+    // Helper function for DAO name validation (Rule 3)
+    function validateDaoDirectionality(dtoFieldName: string, daoClassName: string): void {
+        // DAO Name Pattern: [4 letters][2 direction letters][2 numbers]
+        const daoPattern = /^[A-Z]{4}([A-Z]{2})\d{2}$/;
+        const match = daoClassName.match(daoPattern);
+
+        if (!match) {
+            // DAO doesn't follow the expected pattern, skip validation
+            return;
+        }
+
+        const daoDirection = match[1]; // Extract direction letters (CE, FE, EE, CS, FS, SS)
+        const inputDirections = ['CE', 'FE', 'EE'];
+        const outputDirections = ['CS', 'FS', 'SS'];
+
+        if (dtoFieldName.startsWith('BDtoIn')) {
+            if (outputDirections.includes(daoDirection)) {
+                console.warn(`⚠️ [DEBUG] Direction mismatch: BDtoIn field "${dtoFieldName}" mapped to output DAO "${daoClassName}" with direction "${daoDirection}"`);
+            }
+        } else if (dtoFieldName.startsWith('BDtoOut')) {
+            if (inputDirections.includes(daoDirection)) {
+                console.warn(`⚠️ [DEBUG] Direction mismatch: BDtoOut field "${dtoFieldName}" mapped to input DAO "${daoClassName}" with direction "${daoDirection}"`);
+            }
+        }
+    }
+
+    // Function to create automatic mappings between DTO and DAO fields
+    function createAutomaticMappings(dtoFields: GroupedFields, daoFields: JavaField[]): any {
+        const input_fields: any[] = [];
+        const output_fields: any[] = [];
+
+        console.log('🔍 [DEBUG] Starting automatic mapping process...');
+        console.log('📊 [DEBUG] Available DTO classes:', Object.keys(dtoFields));
+        console.log('📊 [DEBUG] Total DAO fields:', daoFields.length);
+
+        // Debug: Show all DAO fields
+        console.log('🏗️ [DEBUG] Available DAO fields:');
+        daoFields.forEach((dao, index) => {
+            console.log(`  ${index + 1}. ${dao.name} (${dao.type}) [${dao.className}]`);
+        });
+
+        // Iterate through all DTO fields grouped by class
+        for (const [dtoClassName, dtosInClass] of Object.entries(dtoFields)) {
+            console.log(`📋 [DEBUG] Processing DTO class: ${dtoClassName} with ${dtosInClass.length} fields`);
+
+            dtosInClass.forEach((dtoField, index) => {
+                console.log(`  📝 [DEBUG] Processing DTO field ${index + 1}: ${dtoField.name} (${dtoField.type})`);
+
+                // Multiple matching strategies
+                let matchingDao = null;
+
+                // Strategy 1: Exact name match (case-insensitive)
+                matchingDao = daoFields.find(daoField =>
+                    daoField.name.toLowerCase() === dtoField.name.toLowerCase()
+                );
+
+                if (!matchingDao) {
+                    // Strategy 2: Remove BDtoIn/BDtoOut prefix and match
+                    const cleanedDtoName = dtoField.name.replace(/^BDto(In|Out)/, '');
+                    matchingDao = daoFields.find(daoField =>
+                        daoField.name.toLowerCase() === cleanedDtoName.toLowerCase()
+                    );
+                    console.log(`    🔄 [DEBUG] Trying cleaned name: ${cleanedDtoName}`);
+                }
+
+                if (!matchingDao) {
+                    // Strategy 3: Partial match (DAO field contains DTO field or vice versa)
+                    const dtoNameLower = dtoField.name.toLowerCase();
+                    matchingDao = daoFields.find(daoField => {
+                        const daoNameLower = daoField.name.toLowerCase();
+                        return daoNameLower.includes(dtoNameLower) || dtoNameLower.includes(daoNameLower);
+                    });
+                    if (matchingDao) {
+                        console.log(`    🎯 [DEBUG] Found partial match: ${matchingDao.name}`);
+                    }
+                }
+
+                if (!matchingDao) {
+                    // Strategy 4: Remove common prefixes/suffixes and try again
+                    const cleanedDto = dtoField.name.replace(/^(BDto(In|Out)|dto|Dto|DTO)/, '').replace(/(Field|field)$/, '');
+                    matchingDao = daoFields.find(daoField => {
+                        const cleanedDao = daoField.name.replace(/^(dao|Dao|DAO)/, '').replace(/(Field|field)$/, '');
+                        return cleanedDao.toLowerCase() === cleanedDto.toLowerCase();
+                    });
+                    if (matchingDao) {
+                        console.log(`    🔧 [DEBUG] Found match after cleaning: ${dtoField.name} -> ${matchingDao.name}`);
+                    }
+                }
+
+                if (matchingDao) {
+                    console.log(`    ✅ [DEBUG] Match found: ${dtoField.name} <-> ${matchingDao.name} (${matchingDao.className})`);
+                    console.log(`    🏷️ [DEBUG] Format will be set to: "${matchingDao.className}"`);
+
+                    // Apply Rule 3: Validate directionality (non-blocking)
+                    validateDaoDirectionality(dtoField.name, matchingDao.className);
+
+                    // Rule 1: Determine source/target based on DTO prefix
+                    if (dtoField.name.startsWith('BDtoIn')) {
+                        // DTO is source, DAO is target, add to input_fields
+                        const inputField = {
+                            format: matchingDao.className, // Rule 2: Format is DAO class name
+                            field_type: "body", // Default field type
+                            source: dtoField.name,
+                            target: matchingDao.name
+                        };
+                        input_fields.push(inputField);
+                        console.log(`    📥 [DEBUG] Added to input_fields:`, JSON.stringify(inputField, null, 2));
+                    } else if (dtoField.name.startsWith('BDtoOut')) {
+                        // DTO is target, DAO is source, add to output_fields
+                        const outputField = {
+                            format: matchingDao.className, // Rule 2: Format is DAO class name
+                            field_type: "body", // Default field type
+                            source: matchingDao.name,
+                            target: dtoField.name
+                        };
+                        output_fields.push(outputField);
+                        console.log(`    📤 [DEBUG] Added to output_fields:`, JSON.stringify(outputField, null, 2));
+                    } else {
+                        // Fields without BDtoIn/BDtoOut prefix - treat as input by default
+                        const defaultField = {
+                            format: matchingDao.className,
+                            field_type: "body",
+                            source: dtoField.name,
+                            target: matchingDao.name
+                        };
+                        input_fields.push(defaultField);
+                        console.log(`    📥 [DEBUG] Added to input_fields (default):`, JSON.stringify(defaultField, null, 2));
+                    }
+                } else {
+                    console.log(`    ❌ [DEBUG] No matching DAO field found for DTO: ${dtoField.name}`);
+                }
+            });
+        }
+
+        console.log(`🎯 [DEBUG] Mapping completed: ${input_fields.length} input fields, ${output_fields.length} output fields`);
+        return { input_fields, output_fields };
+    }
+
     // Función que contiene la lógica principal del mapeo desde proyecto
     async function executeMapFromProject() {
         try {
@@ -480,11 +618,12 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            // 6. Crear y mostrar el Webview mejorado
+            // 6. Create the webview for manual mapping (no automatic mapping)
             createEnhancedMappingWebview(context, context.extensionUri, dtoFields, daoFields);
 
         } catch (error) {
             vscode.window.showErrorMessage(`Error durante el procesamiento automático: ${error}`);
+            console.error('❌ [DEBUG] Error en executeMapFromProject:', error);
         }
     }
 
@@ -1107,16 +1246,78 @@ function generateMapstructConfig(mappings: any[]) {
     console.log('🔧 [DEBUG] Generando configuración MapStruct...');
     console.log('📋 [DEBUG] Mapeos recibidos:', JSON.stringify(mappings, null, 2));
 
-    // TODO: Integrar con API para generar código MapStruct real
-    const jsonOutput = {
-        timestamp: new Date().toISOString(),
-        totalMappings: mappings.length,
-        mappings: mappings,
-        source: 'project-analysis'
+    // Transform webview mappings to the correct format
+    const input_fields: any[] = [];
+    const output_fields: any[] = [];
+
+    mappings.forEach((mapping: any) => {
+        mapping.dtoFields.forEach((dtoField: any) => {
+            mapping.daoFields.forEach((daoField: any) => {
+                // Apply Rule 1: Determine source/target based on DTO prefix
+                if (dtoField.name.startsWith('BDtoIn')) {
+                    // DTO is source, DAO is target, add to input_fields
+                    input_fields.push({
+                        format: daoField.className, // Rule 2: Format is DAO class name
+                        field_type: "body", // Default field type
+                        source: dtoField.name,
+                        target: daoField.name
+                    });
+                } else if (dtoField.name.startsWith('BDtoOut')) {
+                    // DTO is target, DAO is source, add to output_fields
+                    output_fields.push({
+                        format: daoField.className, // Rule 2: Format is DAO class name
+                        field_type: "body", // Default field type
+                        source: daoField.name,
+                        target: dtoField.name
+                    });
+                } else {
+                    // Fields without BDtoIn/BDtoOut prefix - treat as input by default
+                    input_fields.push({
+                        format: daoField.className,
+                        field_type: "body",
+                        source: dtoField.name,
+                        target: daoField.name
+                    });
+                }
+            });
+        });
+    });
+
+    // Generate the target JSON structure (same as executeMapFromPreview)
+    const transformedData = {
+        id: `project-${Date.now()}`, // Generate unique ID for project-based mapping
+        mappings: [
+            {
+                backend_type: "PROJECT", // Backend type for project analysis
+                trx_name: "manual-mapping", // Indicate this came from manual mapping
+                fields: {
+                    input_fields: input_fields,
+                    output_fields: output_fields
+                }
+            }
+        ]
     };
 
-    console.log('📄 [DEBUG] JSON generado:', JSON.stringify(jsonOutput, null, 2));
-    vscode.window.showInformationMessage(`MapStruct generado con ${mappings.length} mapeos. Ver consola para detalles.`);
+    // Print detailed mapping information (matching executeMapFromPreview format)
+    console.log('🔄 [DEBUG] Data transformed successfully');
+    console.log('📋 [DEBUG] Transformed structure:', JSON.stringify(transformedData, null, 2));
+
+    // Print detailed mapping information
+    console.log('🎯 [DEBUG] MAPEO GENERADO:');
+    console.log('📍 [DEBUG] ID:', transformedData.id);
+    console.log('🏗️ [DEBUG] Backend Type:', transformedData.mappings[0].backend_type);
+    console.log('🔗 [DEBUG] Transaction Name:', transformedData.mappings[0].trx_name);
+    console.log('📥 [DEBUG] Input Fields:', input_fields.length);
+    input_fields.forEach((field: any, index: number) => {
+        console.log(`  ${index + 1}. ${field.source} -> ${field.target} (${field.field_type}) [${field.format}]`);
+    });
+    console.log('📤 [DEBUG] Output Fields:', output_fields.length);
+    output_fields.forEach((field: any, index: number) => {
+        console.log(`  ${index + 1}. ${field.source} -> ${field.target} (${field.field_type}) [${field.format}]`);
+    });
+    console.log('✅ [DEBUG] MAPEO COMPLETO GENERADO');
+
+    vscode.window.showInformationMessage(`MapStruct generado con ${mappings.length} mapeos manuales. Ver consola para detalles.`);
 }
 
 /**
