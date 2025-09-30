@@ -392,7 +392,7 @@ function getSelectedModelFolderName(): string {
 }
 
 // Helper function for DAO name validation (Rule 3) - Returns warning message for generation
-function validateDaoDirectionalityForGeneration(dtoClassName: string, dtoFieldName: string, daoClassName: string): string | null {
+function validateDaoDirectionalityForGeneration(dtoClassName: string, dtoFieldName: string, daoFieldName: string, daoClassName: string): string | null {
     // DAO Name Pattern: [4 letters][2 direction letters][2 numbers]
     const daoPattern = /^Formato[A-Z]{4}([A-Z]{2})\d{2}$/;
     const match = RegExp(daoPattern).exec(daoClassName);
@@ -409,11 +409,11 @@ function validateDaoDirectionalityForGeneration(dtoClassName: string, dtoFieldNa
     // Validate based on DTO CLASS NAME (not field name)
     if (dtoClassName.startsWith('BDtoIn')) {
         if (outputDirections.includes(daoDirection)) {
-            return `⚠️ Clase DTO de ENTRADA "${dtoClassName}" (campo "${dtoFieldName}") mapeada con DAO de SALIDA "${daoClassName}" (dirección ${daoDirection})`;
+            return `⚠️ MAPEO INCOMPATIBLE: DTO.${dtoFieldName} (${dtoClassName}) → DAO.${daoFieldName} (${daoClassName}, dirección: ${daoDirection}). DTO de ENTRADA no puede mapear con DAO de SALIDA.`;
         }
     } else if (dtoClassName.startsWith('BDtoOut')) {
         if (inputDirections.includes(daoDirection)) {
-            return `⚠️ Clase DTO de SALIDA "${dtoClassName}" (campo "${dtoFieldName}") mapeada con DAO de ENTRADA "${daoClassName}" (dirección ${daoDirection})`;
+            return `⚠️ MAPEO INCOMPATIBLE: DTO.${dtoFieldName} (${dtoClassName}) → DAO.${daoFieldName} (${daoClassName}, dirección: ${daoDirection}). DTO de SALIDA no puede mapear con DAO de ENTRADA.`;
         }
     }
 
@@ -537,7 +537,7 @@ export function activate(context: vscode.ExtensionContext) {
                     console.log(`    🏷️ [DEBUG] Format will be set to: "${matchingDao.className}"`);
 
                     // Apply Rule 3: Validate directionality (non-blocking)
-                    const validationWarning = validateDaoDirectionalityForGeneration(dtoClassName, dtoField.name, matchingDao.className);
+                    const validationWarning = validateDaoDirectionalityForGeneration(dtoClassName, dtoField.name, matchingDao.name, matchingDao.className);
                     if (validationWarning) {
                         console.warn(`⚠️ [DEBUG] ${validationWarning}`);
                     }
@@ -1276,7 +1276,7 @@ async function generateMapstructConfig(mappings: any[]) {
     mappings.forEach((mapping: any, mappingIndex: number) => {
         mapping.dtoFields.forEach((dtoField: any) => {
             mapping.daoFields.forEach((daoField: any) => {
-                const warning = validateDaoDirectionalityForGeneration(dtoField.className, dtoField.name, daoField.className);
+                const warning = validateDaoDirectionalityForGeneration(dtoField.className, dtoField.name, daoField.name, daoField.className);
                 if (warning) {
                     directionalProblems.push(`Mapeo ${mappingIndex + 1}: ${dtoField.name} ↔ ${daoField.name} (${daoField.className})\n   ${warning}`);
                 }
@@ -1315,7 +1315,7 @@ async function generateMapstructConfig(mappings: any[]) {
             directionalProblems.forEach(problem => console.warn(problem));
 
             // Show detailed modal with problems
-            const detailMessage = `INCOMPATIBILIDADES DIRECCIONALES ENCONTRADAS:\n\n${problemDetails}\n\nRevisa los mapeos marcados con ⚠️ en la interfaz.`;
+            const detailMessage = `INCOMPATIBILIDADES DIRECCIONALES ENCONTRADAS:\n\n${problemDetails}`;
             vscode.window.showErrorMessage(detailMessage, { modal: true });
             return;
         }
@@ -1793,6 +1793,112 @@ function getWebviewContent(
             display: flex;
             justify-content: space-between;
         }
+
+        /* Invalid Mappings Section */
+        .invalid-mappings-section {
+            background: var(--vscode-inputValidation-warningBackground);
+            border: 1px solid var(--vscode-inputValidation-warningBorder);
+            border-radius: 4px;
+            margin: 12px 20px;
+            overflow: hidden;
+        }
+
+        .invalid-mappings-header {
+            background: var(--vscode-inputValidation-warningBackground);
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--vscode-inputValidation-warningBorder);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .warning-icon {
+            font-size: 16px;
+            color: var(--vscode-inputValidation-warningForeground);
+        }
+
+        .warning-title {
+            flex: 1;
+            font-weight: 500;
+            color: var(--vscode-inputValidation-warningForeground);
+        }
+
+        .btn-close {
+            background: transparent;
+            border: none;
+            color: var(--vscode-inputValidation-warningForeground);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 2px;
+            font-size: 12px;
+        }
+
+        .btn-close:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .invalid-mappings-list {
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .invalid-mapping-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--vscode-inputValidation-warningBorder);
+            background: var(--vscode-editor-background);
+        }
+
+        .invalid-mapping-item:last-child {
+            border-bottom: none;
+        }
+
+        .invalid-mapping-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .invalid-mapping-fields {
+            font-family: var(--vscode-editor-font-family);
+            font-size: 12px;
+            color: var(--vscode-foreground);
+        }
+
+        .invalid-mapping-warning {
+            font-size: 11px;
+            color: var(--vscode-inputValidation-warningForeground);
+            margin-top: 4px;
+            line-height: 1.3;
+        }
+
+        .btn-remove-mapping {
+            background: var(--vscode-button-secondaryBackground);
+            border: 1px solid var(--vscode-button-border);
+            color: var(--vscode-button-secondaryForeground);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+
+        .btn-remove-mapping:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        .invalid-mappings-actions {
+            padding: 12px 16px;
+            background: var(--vscode-panel-background);
+            display: flex;
+            gap: 8px;
+            border-top: 1px solid var(--vscode-inputValidation-warningBorder);
+        }
+
+        .btn.small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -1810,6 +1916,20 @@ function getWebviewContent(
         <button class="btn secondary" onclick="clearMappings()">🗑️ Limpiar</button>
         <button class="btn secondary" onclick="undoMapping()">↶ Deshacer</button>
         <button class="btn" onclick="generateMapstruct()">⚡ Generar MapStruct</button>
+    </div>
+
+    <div id="invalidMappingsSection" class="invalid-mappings-section" style="display: none;">
+        <div class="invalid-mappings-header">
+            <span class="warning-icon">⚠️</span>
+            <span class="warning-title">Mapeos con Problemas de Validación</span>
+            <button class="btn-close" onclick="hideInvalidMappings()" title="Ocultar sección">✕</button>
+        </div>
+        <div id="invalidMappingsList" class="invalid-mappings-list">
+        </div>
+        <div class="invalid-mappings-actions">
+            <button class="btn secondary small" onclick="removeAllInvalidMappings()">🗑️ Eliminar Todos</button>
+            <button class="btn secondary small" onclick="hideInvalidMappings()">👀 Ocultar</button>
+        </div>
     </div>
 
     <div class="search-container">
@@ -2069,7 +2189,7 @@ function getWebviewContent(
         }
 
         // Function to validate DAO directionality (same as server-side validation)
-        function validateDaoDirectionality(dtoClassName, dtoFieldName, daoClassName) {
+        function validateDaoDirectionality(dtoClassName, dtoFieldName, daoFieldName, daoClassName) {
             // DAO Name Pattern: [4 letters][2 direction letters][2 numbers]
             const daoPattern = /^[A-Z]{4}([A-Z]{2})\\d{2}$/;
             const match = daoClassName.match(daoPattern);
@@ -2086,11 +2206,11 @@ function getWebviewContent(
             // Validate based on DTO CLASS NAME (not field name)
             if (dtoClassName.startsWith('BDtoIn')) {
                 if (outputDirections.includes(daoDirection)) {
-                    return \`⚠️ Incompatibilidad direccional: Clase DTO de entrada "\${dtoClassName}" (campo "\${dtoFieldName}") mapeada con DAO de salida "\${daoClassName}" (dirección \${daoDirection})\`;
+                    return \`⚠️ MAPEO INCOMPATIBLE: DTO.\${dtoFieldName} (\${dtoClassName}) → DAO.\${daoFieldName} (\${daoClassName}, dirección: \${daoDirection}). DTO de ENTRADA no puede mapear con DAO de SALIDA.\`;
                 }
             } else if (dtoClassName.startsWith('BDtoOut')) {
                 if (inputDirections.includes(daoDirection)) {
-                    return \`⚠️ Incompatibilidad direccional: Clase DTO de salida "\${dtoClassName}" (campo "\${dtoFieldName}") mapeada con DAO de entrada "\${daoClassName}" (dirección \${daoDirection})\`;
+                    return \`⚠️ MAPEO INCOMPATIBLE: DTO.\${dtoFieldName} (\${dtoClassName}) → DAO.\${daoFieldName} (\${daoClassName}, dirección: \${daoDirection}). DTO de SALIDA no puede mapear con DAO de ENTRADA.\`;
                 }
             }
 
@@ -2103,7 +2223,7 @@ function getWebviewContent(
                 const warnings = [];
                 selectedDtoFields.forEach(dtoField => {
                     selectedDaoFields.forEach(daoField => {
-                        const warning = validateDaoDirectionality(dtoField.className, dtoField.name, daoField.className);
+                        const warning = validateDaoDirectionality(dtoField.className, dtoField.name, daoField.name, daoField.className);
                         if (warning) {
                             warnings.push(warning);
                         }
@@ -2165,6 +2285,7 @@ function getWebviewContent(
 
                 updateStats();
                 updateStatus();
+                updateInvalidMappingsDisplay();
             }
         }
 
@@ -2198,6 +2319,7 @@ function getWebviewContent(
             renderDaoFields();
             markMappedFields();
             updateStats();
+            updateInvalidMappingsDisplay();
 
             vscode.postMessage({
                 command: 'autoMapping'
@@ -2393,6 +2515,7 @@ function getWebviewContent(
 
             updateStats();
             updateStatus();
+            updateInvalidMappingsDisplay();
 
             vscode.postMessage({
                 command: 'clearMappings'
@@ -2497,6 +2620,118 @@ function getWebviewContent(
             }
 
             document.getElementById('statusText').textContent = statusText;
+        }
+
+        // Funciones para manejar mapeos inválidos
+        function showInvalidMappings(mappingsWithWarnings) {
+            const section = document.getElementById('invalidMappingsSection');
+            const list = document.getElementById('invalidMappingsList');
+
+            if (!mappingsWithWarnings || mappingsWithWarnings.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+
+            // Limpiar lista anterior
+            list.innerHTML = '';
+
+            // Agregar cada mapeo inválido
+            mappingsWithWarnings.forEach((mapping, index) => {
+                const item = document.createElement('div');
+                item.className = 'invalid-mapping-item';
+                item.setAttribute('data-mapping-id', mapping.id);
+
+                const summary = document.createElement('div');
+                summary.className = 'invalid-mapping-summary';
+
+                const fields = document.createElement('div');
+                fields.className = 'invalid-mapping-fields';
+
+                const dtoFieldsText = mapping.dtoFields.map(f => \`DTO.\${f.name}\`).join(', ');
+                const daoFieldsText = mapping.daoFields.map(f => \`DAO.\${f.name}\`).join(', ');
+                fields.textContent = \`\${dtoFieldsText} → \${daoFieldsText}\`;
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'btn-remove-mapping';
+                removeBtn.textContent = '🗑️ Eliminar';
+                removeBtn.onclick = () => removeInvalidMapping(mapping.id);
+
+                summary.appendChild(fields);
+                summary.appendChild(removeBtn);
+                item.appendChild(summary);
+
+                // Agregar warnings
+                if (mapping.warnings && mapping.warnings.length > 0) {
+                    mapping.warnings.forEach(warning => {
+                        const warningDiv = document.createElement('div');
+                        warningDiv.className = 'invalid-mapping-warning';
+                        warningDiv.textContent = warning;
+                        item.appendChild(warningDiv);
+                    });
+                }
+
+                list.appendChild(item);
+            });
+
+            section.style.display = 'block';
+        }
+
+        function hideInvalidMappings() {
+            document.getElementById('invalidMappingsSection').style.display = 'none';
+        }
+
+        function removeInvalidMapping(mappingId) {
+            // Encontrar el mapeo en el array global
+            const mappingIndex = mappings.findIndex(m => m.id === mappingId);
+            if (mappingIndex !== -1) {
+                const mapping = mappings[mappingIndex];
+
+                // Remover estilos de los campos
+                mapping.dtoFields.forEach(field => {
+                    const element = document.querySelector(\`[data-field-id="\${field.className}.\${field.name}"]\`);
+                    if (element) {
+                        removeMappingStyle(element);
+                    }
+                });
+
+                mapping.daoFields.forEach(field => {
+                    const element = document.querySelector(\`[data-dao-field="\${field.name}"]\`);
+                    if (element) {
+                        removeMappingStyle(element);
+                    }
+                });
+
+                // Remover el mapeo del array
+                mappings.splice(mappingIndex, 1);
+
+                // Actualizar la visualización
+                updateInvalidMappingsDisplay();
+                updateStats();
+            }
+        }
+
+        function removeAllInvalidMappings() {
+            // Obtener todos los mapeos con warnings
+            const invalidMappings = mappings.filter(m => m.warnings && m.warnings.length > 0);
+
+            if (invalidMappings.length === 0) return;
+
+            if (confirm(\`¿Estás seguro de eliminar \${invalidMappings.length} mapeo(s) inválido(s)?\`)) {
+                invalidMappings.forEach(mapping => {
+                    removeInvalidMapping(mapping.id);
+                });
+            }
+        }
+
+        function updateInvalidMappingsDisplay() {
+            const invalidMappings = mappings.filter(m => m.warnings && m.warnings.length > 0);
+            showInvalidMappings(invalidMappings);
+        }
+
+        function removeMappingStyle(element) {
+            element.classList.remove('mapped');
+            element.style.backgroundColor = '';
+            element.style.borderColor = '';
         }
     </script>
 </body>
