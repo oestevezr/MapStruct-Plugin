@@ -391,6 +391,35 @@ function getSelectedModelFolderName(): string {
     return selectedModelFolderName;
 }
 
+// Helper function for DAO name validation (Rule 3) - Returns warning message for generation
+function validateDaoDirectionalityForGeneration(dtoClassName: string, dtoFieldName: string, daoClassName: string): string | null {
+    // DAO Name Pattern: [4 letters][2 direction letters][2 numbers]
+    const daoPattern = /^Formato[A-Z]{4}([A-Z]{2})\d{2}$/;
+    const match = RegExp(daoPattern).exec(daoClassName);
+
+    if (!match) {
+        // DAO doesn't follow the expected pattern, skip validation
+        return null;
+    }
+
+    const daoDirection = match[1]; // Extract direction letters (CE, FE, EE, CS, FS, SS)
+    const inputDirections = ['CE', 'FE', 'EE'];
+    const outputDirections = ['CS', 'FS', 'SS'];
+
+    // Validate based on DTO CLASS NAME (not field name)
+    if (dtoClassName.startsWith('BDtoIn')) {
+        if (outputDirections.includes(daoDirection)) {
+            return `⚠️ Clase DTO de ENTRADA "${dtoClassName}" (campo "${dtoFieldName}") mapeada con DAO de SALIDA "${daoClassName}" (dirección ${daoDirection})`;
+        }
+    } else if (dtoClassName.startsWith('BDtoOut')) {
+        if (inputDirections.includes(daoDirection)) {
+            return `⚠️ Clase DTO de SALIDA "${dtoClassName}" (campo "${dtoFieldName}") mapeada con DAO de ENTRADA "${daoClassName}" (dirección ${daoDirection})`;
+        }
+    }
+
+    return null; // No mismatch found
+}
+
 export function activate(context: vscode.ExtensionContext) {
 
     console.log('🚀 [DEBUG] La extensión "mapstruct-generator" está siendo activada...');
@@ -438,31 +467,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     console.log('📋 [DEBUG] Todos los comandos registrados correctamente');
 
-    // Helper function for DAO name validation (Rule 3)
-    function validateDaoDirectionality(dtoFieldName: string, daoClassName: string): void {
-        // DAO Name Pattern: [4 letters][2 direction letters][2 numbers]
-        const daoPattern = /^[A-Z]{4}([A-Z]{2})\d{2}$/;
-        const match = daoClassName.match(daoPattern);
 
-        if (!match) {
-            // DAO doesn't follow the expected pattern, skip validation
-            return;
-        }
-
-        const daoDirection = match[1]; // Extract direction letters (CE, FE, EE, CS, FS, SS)
-        const inputDirections = ['CE', 'FE', 'EE'];
-        const outputDirections = ['CS', 'FS', 'SS'];
-
-        if (dtoFieldName.startsWith('BDtoIn')) {
-            if (outputDirections.includes(daoDirection)) {
-                console.warn(`⚠️ [DEBUG] Direction mismatch: BDtoIn field "${dtoFieldName}" mapped to output DAO "${daoClassName}" with direction "${daoDirection}"`);
-            }
-        } else if (dtoFieldName.startsWith('BDtoOut')) {
-            if (inputDirections.includes(daoDirection)) {
-                console.warn(`⚠️ [DEBUG] Direction mismatch: BDtoOut field "${dtoFieldName}" mapped to input DAO "${daoClassName}" with direction "${daoDirection}"`);
-            }
-        }
-    }
 
     // Function to create automatic mappings between DTO and DAO fields
     function createAutomaticMappings(dtoFields: GroupedFields, daoFields: JavaField[]): any {
@@ -532,7 +537,10 @@ export function activate(context: vscode.ExtensionContext) {
                     console.log(`    🏷️ [DEBUG] Format will be set to: "${matchingDao.className}"`);
 
                     // Apply Rule 3: Validate directionality (non-blocking)
-                    validateDaoDirectionality(dtoField.name, matchingDao.className);
+                    const validationWarning = validateDaoDirectionalityForGeneration(dtoClassName, dtoField.name, matchingDao.className);
+                    if (validationWarning) {
+                        console.warn(`⚠️ [DEBUG] ${validationWarning}`);
+                    }
 
                     // Rule 1: Determine source/target based on DTO prefix
                     if (dtoField.name.startsWith('BDtoIn')) {
@@ -1262,7 +1270,62 @@ async function generateMapstructConfig(mappings: any[]) {
     console.log('🔧 [DEBUG] Generando configuración MapStruct...');
     console.log('📋 [DEBUG] Mapeos recibidos:', JSON.stringify(mappings, null, 2));
 
-    // Ask user for backend type
+    // Step 1: Validate directional mappings before proceeding
+    const directionalProblems: string[] = [];
+
+    mappings.forEach((mapping: any, mappingIndex: number) => {
+        mapping.dtoFields.forEach((dtoField: any) => {
+            mapping.daoFields.forEach((daoField: any) => {
+                const warning = validateDaoDirectionalityForGeneration(dtoField.className, dtoField.name, daoField.className);
+                if (warning) {
+                    directionalProblems.push(`Mapeo ${mappingIndex + 1}: ${dtoField.name} ↔ ${daoField.name} (${daoField.className})\n   ${warning}`);
+                }
+            });
+        });
+    });
+
+    // If there are directional problems, show modal and ask user to continue or cancel
+    if (directionalProblems.length > 0) {
+        const problemDetails = directionalProblems.join('\n\n');
+
+        const continueOptions = [
+            {
+                label: '⚠️ Continuar con advertencias',
+                detail: 'Generar el MapStruct ignorando las incompatibilidades direccionales',
+                action: 'continue'
+            },
+            {
+                label: '🔙 Volver a corregir',
+                detail: 'Cancelar y revisar los mapeos problemáticos',
+                action: 'cancel'
+            }
+        ];
+
+        const userChoice = await vscode.window.showQuickPick(continueOptions, {
+            title: `🚨 Se encontraron ${directionalProblems.length} incompatibilidad(es) direccional(es)`,
+            placeHolder: '¿Qué deseas hacer?',
+            ignoreFocusOut: true
+        });
+
+        if (!userChoice || userChoice.action === 'cancel') {
+            vscode.window.showWarningMessage(`Generación cancelada. Se encontraron ${directionalProblems.length} incompatibilidades direccionales.`);
+
+            // Show detailed problems in output
+            console.warn('🚨 [WARNING] Problemas direccionales encontrados:');
+            directionalProblems.forEach(problem => console.warn(problem));
+
+            // Show detailed modal with problems
+            const detailMessage = `INCOMPATIBILIDADES DIRECCIONALES ENCONTRADAS:\n\n${problemDetails}\n\nRevisa los mapeos marcados con ⚠️ en la interfaz.`;
+            vscode.window.showErrorMessage(detailMessage, { modal: true });
+            return;
+        }
+
+        // User chose to continue despite warnings
+        console.warn(`⚠️ [WARNING] Usuario decidió continuar con ${directionalProblems.length} advertencias direccionales`);
+        directionalProblems.forEach(problem => console.warn(problem));
+    }
+
+    // Step 2: Ask user for backend type (only if validation passed or user chose to continue)
     const backendOptions = [
         { label: 'HOST', detail: 'Sistema Host mainframe' },
         { label: 'APX', detail: 'Sistema APX' }
@@ -2006,7 +2069,7 @@ function getWebviewContent(
         }
 
         // Function to validate DAO directionality (same as server-side validation)
-        function validateDaoDirectionality(dtoFieldName, daoClassName) {
+        function validateDaoDirectionality(dtoClassName, dtoFieldName, daoClassName) {
             // DAO Name Pattern: [4 letters][2 direction letters][2 numbers]
             const daoPattern = /^[A-Z]{4}([A-Z]{2})\\d{2}$/;
             const match = daoClassName.match(daoPattern);
@@ -2020,13 +2083,14 @@ function getWebviewContent(
             const inputDirections = ['CE', 'FE', 'EE'];
             const outputDirections = ['CS', 'FS', 'SS'];
 
-            if (dtoFieldName.startsWith('BDtoIn')) {
+            // Validate based on DTO CLASS NAME (not field name)
+            if (dtoClassName.startsWith('BDtoIn')) {
                 if (outputDirections.includes(daoDirection)) {
-                    return \`⚠️ Incompatibilidad direccional: Campo DTO de entrada "\${dtoFieldName}" mapeado con DAO de salida "\${daoClassName}" (dirección \${daoDirection})\`;
+                    return \`⚠️ Incompatibilidad direccional: Clase DTO de entrada "\${dtoClassName}" (campo "\${dtoFieldName}") mapeada con DAO de salida "\${daoClassName}" (dirección \${daoDirection})\`;
                 }
-            } else if (dtoFieldName.startsWith('BDtoOut')) {
+            } else if (dtoClassName.startsWith('BDtoOut')) {
                 if (inputDirections.includes(daoDirection)) {
-                    return \`⚠️ Incompatibilidad direccional: Campo DTO de salida "\${dtoFieldName}" mapeado con DAO de entrada "\${daoClassName}" (dirección \${daoDirection})\`;
+                    return \`⚠️ Incompatibilidad direccional: Clase DTO de salida "\${dtoClassName}" (campo "\${dtoFieldName}") mapeada con DAO de entrada "\${daoClassName}" (dirección \${daoDirection})\`;
                 }
             }
 
@@ -2039,7 +2103,7 @@ function getWebviewContent(
                 const warnings = [];
                 selectedDtoFields.forEach(dtoField => {
                     selectedDaoFields.forEach(daoField => {
-                        const warning = validateDaoDirectionality(dtoField.name, daoField.className);
+                        const warning = validateDaoDirectionality(dtoField.className, dtoField.name, daoField.className);
                         if (warning) {
                             warnings.push(warning);
                         }
