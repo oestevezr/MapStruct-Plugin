@@ -379,6 +379,18 @@ async function extractDaoFields(businessPath: string, selectedFolder: string): P
 /**
  * Función principal que se ejecuta cuando la extensión es activada.
  */
+// Global variable to store selected model folder name
+let selectedModelFolderName: string = '';
+
+// Function to get the selected model folder name
+function getSelectedModelFolderName(): string {
+    if (!selectedModelFolderName) {
+        console.warn('⚠️ [DEBUG] No model folder name available, using default');
+        return 'unknown-model';
+    }
+    return selectedModelFolderName;
+}
+
 export function activate(context: vscode.ExtensionContext) {
 
     console.log('🚀 [DEBUG] La extensión "mapstruct-generator" está siendo activada...');
@@ -610,6 +622,10 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 selectedModelFolder = selection.label;
             }
+
+            // Guardar el nombre de la carpeta seleccionada en la variable global
+            selectedModelFolderName = selectedModelFolder;
+            console.log(`🔗 [DEBUG] Carpeta de modelo seleccionada guardada: ${selectedModelFolderName}`);
 
             // 5. Extraer campos DAO
             const daoFields = await extractDaoFields(businessPath, selectedModelFolder);
@@ -1211,7 +1227,7 @@ function createEnhancedMappingWebview(
 
     // Manejar mensajes desde el webview
     panel.webview.onDidReceiveMessage(
-        message => {
+        async message => {
             switch (message.command) {
                 case 'clearMappings':
                     vscode.window.showInformationMessage('Mapeos limpiados');
@@ -1220,7 +1236,7 @@ function createEnhancedMappingWebview(
                     vscode.window.showInformationMessage('Último mapeo deshecho');
                     break;
                 case 'generateMapstruct':
-                    generateMapstructConfig(message.mappings);
+                    await generateMapstructConfig(message.mappings);
                     break;
                 case 'autoMapping':
                     vscode.window.showInformationMessage('Auto-mapeo ejecutado');
@@ -1242,9 +1258,30 @@ function createEnhancedMappingWebview(
 /**
  * Genera la configuración de MapStruct desde los mapeos creados.
  */
-function generateMapstructConfig(mappings: any[]) {
+async function generateMapstructConfig(mappings: any[]) {
     console.log('🔧 [DEBUG] Generando configuración MapStruct...');
     console.log('📋 [DEBUG] Mapeos recibidos:', JSON.stringify(mappings, null, 2));
+
+    // Ask user for backend type
+    const backendOptions = [
+        { label: 'HOST', detail: 'Sistema Host mainframe' },
+        { label: 'APX', detail: 'Sistema APX' }
+    ];
+
+    const backendSelection = await vscode.window.showQuickPick(backendOptions, {
+        title: 'Selecciona el tipo de backend',
+        placeHolder: '¿Es un sistema HOST o APX?'
+    });
+
+    if (!backendSelection) {
+        vscode.window.showInformationMessage('Generación de MapStruct cancelada.');
+        return;
+    }
+
+    const backend_type = backendSelection.label;
+
+    // Get the selected model folder name from global variable
+    const trx_name = getSelectedModelFolderName();
 
     // Transform webview mappings to the correct format
     const input_fields: any[] = [];
@@ -1254,29 +1291,30 @@ function generateMapstructConfig(mappings: any[]) {
         mapping.dtoFields.forEach((dtoField: any) => {
             mapping.daoFields.forEach((daoField: any) => {
                 // Apply Rule 1: Determine source/target based on DTO prefix
+                // NO LIMPIAR NOMBRES - usar exactamente como vienen
                 if (dtoField.name.startsWith('BDtoIn')) {
                     // DTO is source, DAO is target, add to input_fields
                     input_fields.push({
                         format: daoField.className, // Rule 2: Format is DAO class name
                         field_type: "body", // Default field type
-                        source: dtoField.name,
-                        target: daoField.name
+                        source: dtoField.name, // Mantener nombre exacto del DTO
+                        target: daoField.name   // Mantener nombre exacto del DAO
                     });
                 } else if (dtoField.name.startsWith('BDtoOut')) {
                     // DTO is target, DAO is source, add to output_fields
                     output_fields.push({
                         format: daoField.className, // Rule 2: Format is DAO class name
                         field_type: "body", // Default field type
-                        source: daoField.name,
-                        target: dtoField.name
+                        source: daoField.name,   // Mantener nombre exacto del DAO
+                        target: dtoField.name    // Mantener nombre exacto del DTO
                     });
                 } else {
                     // Fields without BDtoIn/BDtoOut prefix - treat as input by default
                     input_fields.push({
                         format: daoField.className,
                         field_type: "body",
-                        source: dtoField.name,
-                        target: daoField.name
+                        source: dtoField.name, // Mantener nombre exacto del DTO
+                        target: daoField.name  // Mantener nombre exacto del DAO
                     });
                 }
             });
@@ -1288,8 +1326,8 @@ function generateMapstructConfig(mappings: any[]) {
         id: `project-${Date.now()}`, // Generate unique ID for project-based mapping
         mappings: [
             {
-                backend_type: "PROJECT", // Backend type for project analysis
-                trx_name: "manual-mapping", // Indicate this came from manual mapping
+                backend_type: backend_type, // Usuario seleccionó HOST o APX
+                trx_name: trx_name, // Nombre de la carpeta seleccionada en dao/model/
                 fields: {
                     input_fields: input_fields,
                     output_fields: output_fields
@@ -1631,6 +1669,28 @@ function getWebviewContent(
 
         /* Los colores ahora se aplican dinámicamente via JavaScript */
 
+        /* Estilos para mapeos con warnings direccionales */
+        .field-item.mapped.warning,
+        .dao-field-item.mapped.warning {
+            border-left-color: #ff6b35 !important;
+            border-left-style: dashed !important;
+            border-left-width: 4px !important;
+            background: linear-gradient(90deg, rgba(255, 107, 53, 0.1) 0%, transparent 10%);
+        }
+
+        .field-item.mapped.warning::before,
+        .dao-field-item.mapped.warning::before {
+            content: "⚠️";
+            position: absolute;
+            left: -2px;
+            top: 2px;
+            font-size: 10px;
+            z-index: 10;
+            background: var(--vscode-editor-background);
+            border-radius: 2px;
+            padding: 1px;
+        }
+
         /* Tooltip para mostrar información del mapeo */
         .mapping-tooltip {
             position: absolute;
@@ -1945,8 +2005,62 @@ function getWebviewContent(
             }
         }
 
+        // Function to validate DAO directionality (same as server-side validation)
+        function validateDaoDirectionality(dtoFieldName, daoClassName) {
+            // DAO Name Pattern: [4 letters][2 direction letters][2 numbers]
+            const daoPattern = /^[A-Z]{4}([A-Z]{2})\\d{2}$/;
+            const match = daoClassName.match(daoPattern);
+
+            if (!match) {
+                // DAO doesn't follow the expected pattern, skip validation
+                return null;
+            }
+
+            const daoDirection = match[1]; // Extract direction letters (CE, FE, EE, CS, FS, SS)
+            const inputDirections = ['CE', 'FE', 'EE'];
+            const outputDirections = ['CS', 'FS', 'SS'];
+
+            if (dtoFieldName.startsWith('BDtoIn')) {
+                if (outputDirections.includes(daoDirection)) {
+                    return \`⚠️ Incompatibilidad direccional: Campo DTO de entrada "\${dtoFieldName}" mapeado con DAO de salida "\${daoClassName}" (dirección \${daoDirection})\`;
+                }
+            } else if (dtoFieldName.startsWith('BDtoOut')) {
+                if (inputDirections.includes(daoDirection)) {
+                    return \`⚠️ Incompatibilidad direccional: Campo DTO de salida "\${dtoFieldName}" mapeado con DAO de entrada "\${daoClassName}" (dirección \${daoDirection})\`;
+                }
+            }
+
+            return null; // No mismatch
+        }
+
         function createMapping() {
             if (selectedDtoFields.length > 0 && selectedDaoFields.length > 0) {
+                // Validate directionality for all selected fields
+                const warnings = [];
+                selectedDtoFields.forEach(dtoField => {
+                    selectedDaoFields.forEach(daoField => {
+                        const warning = validateDaoDirectionality(dtoField.name, daoField.className);
+                        if (warning) {
+                            warnings.push(warning);
+                        }
+                    });
+                });
+
+                // Show warnings if any incompatibilities are found
+                if (warnings.length > 0) {
+                    const warningMessage = warnings.join('\\n\\n');
+                    const statusElement = document.getElementById('statusText');
+                    if (statusElement) {
+                        statusElement.style.color = '#ff6b35';
+                        statusElement.textContent = \`⚠️ ADVERTENCIA: \${warnings.length} incompatibilidad(es) direccional(es) detectada(s)\`;
+                    }
+                    console.warn('🚨 [WARNING] Incompatibilidades direccionales detectadas:');
+                    warnings.forEach(warning => console.warn(warning));
+
+                    // Show popup warning but allow mapping to continue
+                    alert(\`🚨 ADVERTENCIAS DIRECCIONALES:\\n\\n\${warningMessage}\\n\\nEl mapeo se creará pero revisa las incompatibilidades.\`);
+                }
+
                 // Guardar en historial para deshacer
                 mappingHistory.push([...mappings]);
 
@@ -1958,7 +2072,8 @@ function getWebviewContent(
                     daoFields: [...selectedDaoFields],
                     type: selectedDtoFields.length === 1 && selectedDaoFields.length === 1 ? '1:1' :
                           selectedDtoFields.length === 1 ? '1:N' : 'N:1',
-                    color: uniqueColor
+                    color: uniqueColor,
+                    warnings: warnings.length > 0 ? warnings : undefined // Store warnings in mapping
                 };
 
                 mappings.push(newMapping);
@@ -2074,8 +2189,16 @@ function getWebviewContent(
                 const mapping = fieldMappings[0];
                 const color = getColorByIndex(mapping.color);
 
-                // Aplicar color dinámicamente
-                element.style.borderLeftColor = color;
+                // Check if mapping has warnings and apply warning style
+                if (mapping.warnings && mapping.warnings.length > 0) {
+                    element.classList.add('warning');
+                    element.title = \`⚠️ Advertencia direccional: \${mapping.warnings.join('; ')}\`;
+                } else {
+                    element.classList.remove('warning');
+                    // Aplicar color dinámicamente
+                    element.style.borderLeftColor = color;
+                    element.style.borderLeftStyle = 'solid';
+                }
 
                 const indicator = element.querySelector('.mapping-indicator');
                 if (indicator) {
@@ -2087,6 +2210,18 @@ function getWebviewContent(
             } else {
                 // Mapeos múltiples - usar indicador multicolor
                 element.classList.add('multi-mapped');
+
+                // Check if any of the multiple mappings have warnings
+                const hasWarnings = fieldMappings.some(mapping => mapping.warnings && mapping.warnings.length > 0);
+                if (hasWarnings) {
+                    element.classList.add('warning');
+                    const allWarnings = fieldMappings
+                        .filter(mapping => mapping.warnings && mapping.warnings.length > 0)
+                        .flatMap(mapping => mapping.warnings);
+                    element.title = \`⚠️ Advertencias direccionales en mapeos múltiples: \${allWarnings.join('; ')}\`;
+                } else {
+                    element.classList.remove('warning');
+                }
 
                 const multiIndicator = element.querySelector('.multi-color-indicator');
                 if (multiIndicator) {
@@ -2102,8 +2237,12 @@ function getWebviewContent(
                     });
                 }
 
-                // Usar el color del primer mapeo para el borde
-                element.style.borderLeftColor = getColorByIndex(fieldMappings[0].color);
+                // Usar el color del primer mapeo para el borde (o warning color if has warnings)
+                if (hasWarnings) {
+                    // Style is handled by CSS warning class
+                } else {
+                    element.style.borderLeftColor = getColorByIndex(fieldMappings[0].color);
+                }
 
                 // Agregar tooltip
                 setupTooltip(element, fieldMappings, fieldType);
